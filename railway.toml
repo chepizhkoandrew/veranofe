@@ -1,0 +1,17 @@
+[build]
+builder = "dockerfile"
+dockerfilePath = "Dockerfile"
+
+[deploy]
+healthcheckPath = "/"
+healthcheckTimeout = 100
+restartPolicyType = "ON_FAILURE"
+restartPolicyMaxRetries = 10
+
+[variables]
+REACT_APP_API_URL = "https://veranoprado-production.up.railway.app"
+NODE_ENV = "production"
+
+[variables]
+REACT_APP_API_URL = "https://veranoprado-production.up.railway.app"
+NODE_ENV = "production"

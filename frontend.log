@@ -1,0 +1,227 @@
+
+> frontend@1.0.0 start
+> react-scripts start
+
+(node:3091) [DEP_WEBPACK_DEV_SERVER_ON_AFTER_SETUP_MIDDLEWARE] DeprecationWarning: 'onAfterSetupMiddleware' option is deprecated. Please use the 'setupMiddlewares' option.
+(Use `node --trace-deprecation ...` to show where the warning was created)
+(node:3091) [DEP_WEBPACK_DEV_SERVER_ON_BEFORE_SETUP_MIDDLEWARE] DeprecationWarning: 'onBeforeSetupMiddleware' option is deprecated. Please use the 'setupMiddlewares' option.
+Starting the development server...
+
+Compiled successfully!
+
+You can now view frontend in the browser.
+
+  Local:            http://localhost:3000
+  On Your Network:  http://192.168.1.34:3000
+
+Note that the development build is not optimized.
+To create a production build, use npm run build.
+
+webpack compiled successfully
+No issues found.
+Compiling...
+Compiled successfully!
+webpack compiled successfully
+No issues found.
+Compiling...
+Compiled successfully!
+webpack compiled successfully
+Compiling...
+Files successfully emitted, waiting for typecheck results...
+Issues checking in progress...
+Compiled successfully!
+webpack compiled successfully
+Files successfully emitted, waiting for typecheck results...
+Issues checking in progress...
+ERROR in src/components/PurchaseRequestEdit.tsx:105:46
+TS2339: Property 'getInventory' does not exist on type 'ApiService'.
+    103 |   const loadInventory = async () => {
+    104 |     try {
+  > 105 |       const inventoryData = await apiService.getInventory();
+        |                                              ^^^^^^^^^^^^
+    106 |       setInventory(inventoryData);
+    107 |     } catch (err) {
+    108 |       console.error('Failed to load inventory:', err);
+
+ERROR in src/components/PurchaseRequestEdit.tsx:161:50
+TS2345: Argument of type '{ supplier_id: string | undefined; expected_delivery: string | undefined; items: { item_id: string; quantity: number; }[]; }' is not assignable to parameter of type 'PurchaseRequestCreate'.
+  Types of property 'supplier_id' are incompatible.
+    Type 'string | undefined' is not assignable to type 'string'.
+      Type 'undefined' is not assignable to type 'string'.
+    159 |
+    160 |       // Call update endpoint (we'll need to create this)
+  > 161 |       await apiService.updatePurchaseRequest(id, updateData);
+        |                                                  ^^^^^^^^^^
+    162 |       
+    163 |       // Navigate back to list
+    164 |       navigate('/receive');
+
+Compiling...
+Compiled successfully!
+webpack compiled successfully
+ERROR in src/components/PurchaseRequestEdit.tsx:161:50
+TS2345: Argument of type '{ supplier_id: string | undefined; expected_delivery: string | undefined; items: { item_id: string; quantity: number; }[]; }' is not assignable to parameter of type 'PurchaseRequestCreate'.
+  Types of property 'supplier_id' are incompatible.
+    Type 'string | undefined' is not assignable to type 'string'.
+      Type 'undefined' is not assignable to type 'string'.
+    159 |
+    160 |       // Call update endpoint (we'll need to create this)
+  > 161 |       await apiService.updatePurchaseRequest(id, updateData);
+        |                                                  ^^^^^^^^^^
+    162 |       
+    163 |       // Navigate back to list
+    164 |       navigate('/receive');
+
+Compiling...
+Compiled successfully!
+webpack compiled successfully
+No issues found.
+Compiling...
+Compiled successfully!
+webpack compiled successfully
+Files successfully emitted, waiting for typecheck results...
+Issues checking in progress...
+ERROR in src/components/PurchaseRequestEdit.tsx:479:15
+TS2322: Type '{ type: string; multiple: true; accept: string; onChange: (event: ChangeEvent<HTMLInputElement>) => void; sx: { display: "none"; }; }' is not assignable to type 'IntrinsicAttributes & InputProps'.
+  Property 'multiple' does not exist on type 'IntrinsicAttributes & InputProps'. Did you mean 'multiline'?
+    477 |             <Input
+    478 |               type="file"
+  > 479 |               multiple
+        |               ^^^^^^^^
+    480 |               accept="image/*"
+    481 |               onChange={handlePhotoUpload}
+    482 |               sx={{ display: 'none' }}
+
+Compiling...
+Compiled successfully!
+webpack compiled successfully
+No issues found.
+Compiling...
+Compiled successfully!
+webpack compiled successfully
+No issues found.
+Compiling...
+Compiled successfully!
+webpack compiled successfully
+ERROR in src/components/PurchaseRequestEdit.tsx:92:30
+TS2339: Property 'purchase_order_attachment' does not exist on type 'PurchaseRequest'.
+    90 |       setPrPrice(request.pr_price || '');
+    91 |       setPhotos(request.photos || []);
+  > 92 |       setAttachments(request.purchase_order_attachment || []);
+       |                              ^^^^^^^^^^^^^^^^^^^^^^^^^
+    93 |       
+    94 |       // Convert to editable format
+    95 |       const editable = request.items.map(item => ({
+
+Compiling...
+Compiled successfully!
+webpack compiled successfully
+No issues found.
+Compiling...
+Compiled successfully!
+webpack compiled successfully
+Files successfully emitted, waiting for typecheck results...
+Issues checking in progress...
+No issues found.
+Compiling...
+Compiled successfully!
+webpack compiled successfully
+Files successfully emitted, waiting for typecheck results...
+Issues checking in progress...
+No issues found.
+Compiling...
+Compiled successfully!
+webpack compiled successfully
+ERROR in src/components/PurchaseRequestEdit.tsx:521:70
+TS2339: Property 'url' does not exist on type 'never'.
+    519 |                     component="img"
+    520 |                     height="200"
+  > 521 |                     image={typeof photo === 'string' ? photo : photo.url}
+        |                                                                      ^^^
+    522 |                     alt={typeof photo === 'string' ? `Photo ${index + 1}` : photo.filename || `Photo ${index + 1}`}
+    523 |                     sx={{ objectFit: 'cover' }}
+    524 |                   />
+
+ERROR in src/components/PurchaseRequestEdit.tsx:522:83
+TS2339: Property 'filename' does not exist on type 'never'.
+    520 |                     height="200"
+    521 |                     image={typeof photo === 'string' ? photo : photo.url}
+  > 522 |                     alt={typeof photo === 'string' ? `Photo ${index + 1}` : photo.filename || `Photo ${index + 1}`}
+        |                                                                                   ^^^^^^^^
+    523 |                     sx={{ objectFit: 'cover' }}
+    524 |                   />
+    525 |                   <CardActions>
+
+Compiling...
+Compiled successfully!
+webpack compiled successfully
+ERROR in src/components/PurchaseRequestEdit.tsx:90:25
+TS2339: Property 'purchase_order_attachment' does not exist on type 'PurchaseRequest'.
+    88 |       setDescription(request.description || '');
+    89 |       setPrPrice(request.pr_price || '');
+  > 90 |       setPhotos(request.purchase_order_attachment || []);
+       |                         ^^^^^^^^^^^^^^^^^^^^^^^^^
+    91 |       
+    92 |       // Convert to editable format
+    93 |       const editable = request.items.map(item => ({
+
+ERROR in src/components/PurchaseRequestEdit.tsx:521:70
+TS2339: Property 'url' does not exist on type 'never'.
+    519 |                     component="img"
+    520 |                     height="200"
+  > 521 |                     image={typeof photo === 'string' ? photo : photo.url}
+        |                                                                      ^^^
+    522 |                     alt={typeof photo === 'string' ? `Photo ${index + 1}` : photo.filename || `Photo ${index + 1}`}
+    523 |                     sx={{ objectFit: 'cover' }}
+    524 |                   />
+
+ERROR in src/components/PurchaseRequestEdit.tsx:522:83
+TS2339: Property 'filename' does not exist on type 'never'.
+    520 |                     height="200"
+    521 |                     image={typeof photo === 'string' ? photo : photo.url}
+  > 522 |                     alt={typeof photo === 'string' ? `Photo ${index + 1}` : photo.filename || `Photo ${index + 1}`}
+        |                                                                                   ^^^^^^^^
+    523 |                     sx={{ objectFit: 'cover' }}
+    524 |                   />
+    525 |                   <CardActions>
+
+Compiling...
+Compiled successfully!
+webpack compiled successfully
+Compiling...
+Files successfully emitted, waiting for typecheck results...
+Issues checking in progress...
+Compiled successfully!
+webpack compiled successfully
+Files successfully emitted, waiting for typecheck results...
+Issues checking in progress...
+No issues found.
+Compiling...
+Compiled successfully!
+webpack compiled successfully
+Compiling...
+Files successfully emitted, waiting for typecheck results...
+Issues checking in progress...
+Compiled successfully!
+webpack compiled successfully
+No issues found.
+Compiling...
+Compiled successfully!
+webpack compiled successfully
+Compiling...
+Files successfully emitted, waiting for typecheck results...
+Issues checking in progress...
+Compiled successfully!
+webpack compiled successfully
+No issues found.
+Compiling...
+Compiled successfully!
+webpack compiled successfully
+Compiling...
+Files successfully emitted, waiting for typecheck results...
+Issues checking in progress...
+Compiled successfully!
+webpack compiled successfully
+Files successfully emitted, waiting for typecheck results...
+Issues checking in progress...
+No issues found.
