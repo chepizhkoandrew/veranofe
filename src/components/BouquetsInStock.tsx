@@ -186,7 +186,7 @@ const BouquetsInStock: React.FC = () => {
 
   const handleMenuClose = () => {
     setAnchorEl(null);
-    setSelectedBouquet(null);
+    // Don't clear selectedBouquet here as we need it for the edit modal
   };
 
   const handleEditBouquet = () => {
@@ -195,7 +195,7 @@ const BouquetsInStock: React.FC = () => {
       setEditCompositions(selectedBouquet.composition.map((comp, index) => ({
         ...comp,
         composition_id: `edit_${index}`,
-        flower_item_id: comp.item_name // We'll need to map this properly
+        flower_item_id: availableFlowers.find(f => f.item_name === comp.item_name)?.record_id || comp.item_name
       })));
       setAttachments([]);
       setEditDialogOpen(true);
@@ -210,12 +210,22 @@ const BouquetsInStock: React.FC = () => {
       // Here you would implement the save API call
       // For now, we'll just show a success message
       alert(`🎉 Bouquet updated successfully!\n\n📋 Transaction ID: ${selectedBouquet.transaction_id}`);
-      setEditDialogOpen(false);
+      handleCloseEditDialog();
       fetchBouquets(); // Refresh the data
     } catch (error) {
       console.error('Error updating bouquet:', error);
       alert(`❌ Error updating bouquet: ${error instanceof Error ? error.message : 'Unknown error'}`);
     }
+  };
+
+  const handleCloseEditDialog = () => {
+    setEditDialogOpen(false);
+    setSelectedBouquet(null);
+    setEditDescription('');
+    setEditCompositions([]);
+    setAttachments([]);
+    setNewFlower(null);
+    setNewFlowerQuantity(1);
   };
 
   const handleCompositionQuantityChange = (compositionId: string, newQuantity: number) => {
@@ -484,7 +494,7 @@ const BouquetsInStock: React.FC = () => {
       {/* Edit Bouquet Dialog */}
       <Dialog 
         open={editDialogOpen} 
-        onClose={() => setEditDialogOpen(false)}
+        onClose={handleCloseEditDialog}
         maxWidth="md"
         fullWidth
         PaperProps={{
@@ -736,7 +746,7 @@ const BouquetsInStock: React.FC = () => {
           )}
         </DialogContent>
         <DialogActions>
-          <Button onClick={() => setEditDialogOpen(false)}>
+          <Button onClick={handleCloseEditDialog}>
             Cancel
           </Button>
           <Button 
