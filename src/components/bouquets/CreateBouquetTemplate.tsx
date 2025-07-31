@@ -31,6 +31,9 @@ import {
   InputLabel,
   Stack,
   Autocomplete,
+  Avatar,
+  Badge,
+  Tooltip,
 } from '@mui/material';
 import {
   ArrowBack as ArrowBackIcon,
@@ -220,6 +223,14 @@ const CreateBouquetTemplate: React.FC = () => {
     return undefined;
   };
 
+  const getTemplateFlowerImage = (composition: BouquetComposition): string | undefined => {
+    const flower = availableFlowers.find(f => f.record_id === composition.flower_item_id);
+    if (flower?.item_picture) {
+      return flower.item_picture;
+    }
+    return undefined;
+  };
+
   if (loading) {
     return (
       <Container maxWidth="xl" sx={{ py: 4 }}>
@@ -325,17 +336,35 @@ const CreateBouquetTemplate: React.FC = () => {
                         </Typography>
                       )}
                       
-                      <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }}>
-                        <Chip 
-                          icon={<FlowerIcon />}
-                          label={`${template.compositions.length} flower types`}
-                          size="small"
-                          color="primary"
-                          variant="outlined"
-                        />
-                        <Typography variant="h6" color="primary.main" sx={{ fontWeight: 'bold' }}>
-                          {formatPrice(template.price)}
-                        </Typography>
+                      <Box sx={{ mb: 2 }}>
+                        <Box display="flex" alignItems="center" gap={1} mb={1}>
+                          <FlowerIcon fontSize="small" color="primary" />
+                          <Typography variant="body2" color="text.secondary">
+                            {template.compositions.length} flower types
+                          </Typography>
+                        </Box>
+                        <Stack direction="row" spacing={1} flexWrap="wrap" useFlexGap>
+                          {template.compositions.map((composition, index) => (
+                            <Tooltip 
+                              key={index}
+                              title={`${composition.quantity}x ${composition.flower_name} (${composition.flower_color})`}
+                            >
+                              <Badge badgeContent={composition.quantity} color="primary" max={99}>
+                                <Avatar
+                                  src={getTemplateFlowerImage(composition)}
+                                  alt={composition.flower_name}
+                                  sx={{ 
+                                    width: 32, 
+                                    height: 32,
+                                    border: `2px solid ${composition.flower_color.toLowerCase() === 'white' ? '#e0e0e0' : 'transparent'}`
+                                  }}
+                                >
+                                  {composition.flower_name.charAt(0)}
+                                </Avatar>
+                              </Badge>
+                            </Tooltip>
+                          ))}
+                        </Stack>
                       </Box>
                       
                       <Button
