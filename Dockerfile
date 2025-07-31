@@ -12,6 +12,10 @@ RUN npm ci --only=production
 # Copy source code
 COPY . .
 
+# Set production environment variable for build
+ENV NODE_ENV=production
+ENV REACT_APP_API_URL=https://veranoprado-production-355e.up.railway.app
+
 # Build the React app
 RUN npm run build
 

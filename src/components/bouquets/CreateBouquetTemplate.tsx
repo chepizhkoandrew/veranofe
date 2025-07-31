@@ -130,17 +130,7 @@ const CreateBouquetTemplate: React.FC = () => {
       });
       
       // Make API call
-      const response = await fetch('http://localhost:8000/bouquets/from-template', {
-        method: 'POST',
-        body: formData
-      });
-      
-      if (!response.ok) {
-        const errorData = await response.json();
-        throw new Error(errorData.detail || 'Failed to create bouquet');
-      }
-      
-      const result = await response.json();
+      const result = await apiService.createBouquetFromTemplate(formData);
       
       // Show success message
       alert(`🎉 Bouquet created successfully!\n\n📋 Transaction ID: ${result.data.transaction_id}\n🌸 Total flowers used: ${result.data.total_flowers_used}\n📎 Files uploaded: ${result.uploaded_files}\n⚡ API efficiency: Only ${result.data.api_calls_used} API calls used`);

@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { apiService } from '../services/api';
 import {
   Container,
   Typography,
@@ -69,12 +70,7 @@ const BouquetsInStock: React.FC = () => {
       setLoading(true);
       setError(null);
       
-      const response = await fetch('http://localhost:8000/bouquets/stock');
-      if (!response.ok) {
-        throw new Error('Failed to fetch bouquets in stock');
-      }
-      
-      const result = await response.json();
+      const result = await apiService.getBouquetsInStock();
       setBouquets(result.data);
     } catch (err) {
       console.error('Error fetching bouquets in stock:', err);

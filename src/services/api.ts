@@ -222,6 +222,22 @@ class ApiService {
     return response.data;
   }
 
+  // Get bouquets in stock
+  async getBouquetsInStock(): Promise<any> {
+    const response = await this.client.get('/bouquets/stock');
+    return response.data;
+  }
+
+  // Create bouquet from template
+  async createBouquetFromTemplate(formData: FormData): Promise<any> {
+    const response = await this.client.post('/bouquets/from-template', formData, {
+      headers: {
+        'Content-Type': 'multipart/form-data',
+      },
+    });
+    return response.data;
+  }
+
   // Suppliers
   async getSuppliers(): Promise<Supplier[]> {
     const response = await this.client.get('/suppliers');
