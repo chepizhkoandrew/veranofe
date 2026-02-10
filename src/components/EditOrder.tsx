@@ -129,7 +129,7 @@ interface OrderItemRow {
   id?: string;
   tempId: string;
   item_id: string;
-  item_type: 'Flower' | 'Bouquet';
+  item_type: 'Flower' | 'Bouquet' | 'Supplement';
   item_name: string;
   quantity: number;
   standard_price: number;
@@ -372,16 +372,30 @@ export default function EditOrder() {
 
   // Reload items when balance data is available to attach available quantities
   useEffect(() => {
-    if (itemsBalance.length > 0 && items.length > 0) {
-      // Reattach balance data to items
-      const itemsWithBalance = items.map((item: Item) => {
-        const balanceRecord = itemsBalance.find(b => b.flower_item_record_id === item.id);
-        return {
-          ...item,
-          availableQty: balanceRecord ? balanceRecord.current_balance : 0
-        };
-      });
-      setItems(itemsWithBalance);
+    if (itemsBalance.length > 0) {
+      // Reattach balance data to flowers
+      if (items.length > 0) {
+        const itemsWithBalance = items.map((item: Item) => {
+          const balanceRecord = itemsBalance.find(b => b.flower_item_record_id === item.id);
+          return {
+            ...item,
+            availableQty: balanceRecord ? balanceRecord.current_balance : 0
+          };
+        });
+        setItems(itemsWithBalance);
+      }
+      
+      // Reattach balance data to supplements
+      if (supplements.length > 0) {
+        const supplementsWithBalance = supplements.map((item: Item) => {
+          const balanceRecord = itemsBalance.find(b => b.flower_item_record_id === item.id);
+          return {
+            ...item,
+            availableQty: balanceRecord ? balanceRecord.current_balance : 0
+          };
+        });
+        setSupplements(supplementsWithBalance);
+      }
     }
   }, [itemsBalance]);
 
@@ -548,31 +562,35 @@ export default function EditOrder() {
   const handleQuantityPickerConfirm = (quantity: number) => {
     if (modalItemType === 'Flower') {
       if (!selectedItemForModal) {
-        setError('Please select a flower to add');
+        setError('Please select an item to add');
         return;
       }
 
-      const baseName = selectedItemForModal.fields.item_name || selectedItemForModal.fields.product_name || 'Unknown Flower';
+      const baseName = selectedItemForModal.fields.item_name || selectedItemForModal.fields.product_name || 'Unknown Item';
       const color = selectedItemForModal.fields.Color;
-      const itemName = color ? `${baseName} (${color})` : baseName;
+      const itemName = color && color !== 'Unknown' ? `${baseName} (${color})` : baseName;
       const standardPrice = selectedItemForModal.fields.standard_price || 0;
       
-      // Get flower picture if available
-      const flowerPicture = selectedItemForModal.fields.item_picture && selectedItemForModal.fields.item_picture.length > 0
+      // Get item picture if available
+      const itemPicture = selectedItemForModal.fields.item_picture && selectedItemForModal.fields.item_picture.length > 0
         ? selectedItemForModal.fields.item_picture[0].url
         : undefined;
+
+      // Determine item type based on category
+      const isFlower = selectedItemForModal.fields.item_category?.toLowerCase() === 'flower';
+      const itemType = isFlower ? 'Flower' : 'Supplement';
       
       const newItem: OrderItemRow = {
         tempId: `temp-${Date.now()}-${Math.random()}`,
         item_id: selectedItemForModal.id,
-        item_type: 'Flower',
+        item_type: itemType as 'Flower' | 'Supplement',
         item_name: itemName,
         quantity: quantity,
         standard_price: standardPrice,
         actual_price: standardPrice,
         subtotal: quantity * standardPrice,
         markup_percentage: null,
-        flower_picture: flowerPicture,
+        flower_picture: itemPicture,
         availableQty: selectedItemForModal.availableQty,
       };
 
@@ -1636,7 +1654,7 @@ export default function EditOrder() {
                           <Chip 
                             label={item.item_type} 
                             size="small" 
-                            color={item.item_type === 'Bouquet' ? 'secondary' : 'primary'}
+                            color={item.item_type === 'Bouquet' ? 'secondary' : item.item_type === 'Supplement' ? 'info' : 'primary'}
                           />
                         </TableCell>
                         
@@ -1652,9 +1670,9 @@ export default function EditOrder() {
                             ) : (
                               <Avatar 
                                 variant="rounded" 
-                                sx={{ width: 32, height: 32, bgcolor: item.item_type === 'Bouquet' ? 'secondary.light' : 'primary.light' }}
+                                sx={{ width: 32, height: 32, bgcolor: item.item_type === 'Bouquet' ? 'secondary.light' : item.item_type === 'Supplement' ? 'info.light' : 'primary.light' }}
                               >
-                                {item.item_type === 'Bouquet' ? <BouquetIcon fontSize="small" /> : <LocalFloristIcon fontSize="small" />}
+                                {item.item_type === 'Bouquet' ? <BouquetIcon fontSize="small" /> : item.item_type === 'Supplement' ? <AssignmentIcon fontSize="small" /> : <LocalFloristIcon fontSize="small" />}
                               </Avatar>
                             )}
                             <Box>
@@ -2145,18 +2163,20 @@ export default function EditOrder() {
         {currentTab === 3 && renderStatusTab()}
       </Box>
 
-      {/* Quantity Picker Dialog - Flowers */}
+      {/* Quantity Picker Dialog - Flowers & Supplements */}
       {selectedItemForModal && modalItemType === 'Flower' && (
         <QuantityPickerDialog
           open={quantityPickerOpen && modalItemType === 'Flower'}
           onClose={handleCloseQuantityPicker}
           item={{
-            item_name: selectedItemForModal.fields.item_name || 'Unknown',
+            item_name: selectedItemForModal.fields.item_name || selectedItemForModal.fields.product_name || 'Unknown',
             Color: selectedItemForModal.fields.Color || 'Unknown',
-            item_picture: undefined,
+            item_picture: selectedItemForModal.fields.item_picture && selectedItemForModal.fields.item_picture.length > 0 
+              ? selectedItemForModal.fields.item_picture[0].url 
+              : undefined,
           } as InventoryItem}
           onConfirm={handleQuantityPickerConfirm}
-          title={`Add ${selectedItemForModal.fields.item_name || 'Flower'} to Order`}
+          title={`Add ${selectedItemForModal.fields.item_name || 'Item'} to Order`}
           availableQty={selectedItemForModal.availableQty || 0}
         />
       )}

@@ -25,8 +25,12 @@ interface QuantityPickerDialogProps {
   onClose: () => void;
   item: InventoryItem | null;
   currentQuantity?: number;
-  onConfirm: (quantity: number) => void;
+  currentPrice?: number;
+  onConfirm: (quantity: number, price?: number) => void;
   title?: string;
+  availableQty?: number; // Optional: for showing stock availability
+  validationError?: string | null; // Optional: external validation error
+  showPriceInput?: boolean; // Optional: show purchase price input (for receiving items)
 }
 
 const QuantityPickerDialog: React.FC<QuantityPickerDialogProps> = ({
@@ -34,22 +38,31 @@ const QuantityPickerDialog: React.FC<QuantityPickerDialogProps> = ({
   onClose,
   item,
   currentQuantity = 0,
+  currentPrice = 0,
   onConfirm,
-  title = "Set Quantity"
+  title = "Set Quantity",
+  availableQty,
+  validationError,
+  showPriceInput = false,
 }) => {
   const [quantity, setQuantity] = useState<string>('');
+  const [price, setPrice] = useState<string>('');
   const [error, setError] = useState<string | null>(null);
+  const [focusedField, setFocusedField] = useState<'quantity' | 'price'>('quantity');
 
   // Reset form when dialog opens
   useEffect(() => {
     if (open && item) {
       setQuantity(currentQuantity > 0 ? currentQuantity.toString() : '');
-      setError(null);
+      setPrice(currentPrice > 0 ? currentPrice.toString() : '');
+      setError(validationError || null);
+      console.log(`📋 QuantityPickerDialog opened - item: ${item.item_name}, availableQty: ${availableQty}`);
     }
-  }, [open, item, currentQuantity]);
+  }, [open, item, currentQuantity, currentPrice, validationError, availableQty]);
 
   const handleClose = () => {
     setQuantity('');
+    setPrice('');
     setError(null);
     onClose();
   };
@@ -73,14 +86,37 @@ const QuantityPickerDialog: React.FC<QuantityPickerDialogProps> = ({
     return colorMap[colorLower] || { backgroundColor: colorLower, color: 'white' };
   };
 
-  // Handle digit pad input
+  // Handle digit pad input - works for both quantity and price
   const handleDigitClick = (digit: string) => {
-    if (digit === 'clear') {
-      setQuantity('');
-    } else if (digit === 'backspace') {
-      setQuantity(prev => prev.slice(0, -1));
+    if (focusedField === 'quantity') {
+      if (digit === 'clear') {
+        setQuantity('');
+      } else if (digit === 'backspace') {
+        setQuantity(prev => prev.slice(0, -1));
+      } else {
+        setQuantity(prev => prev + digit);
+      }
     } else {
-      setQuantity(prev => prev + digit);
+      // Price field
+      if (digit === 'clear') {
+        setPrice('');
+      } else if (digit === 'backspace') {
+        setPrice(prev => prev.slice(0, -1));
+      } else if (digit === '.') {
+        // Only add decimal point if there isn't one already
+        setPrice(prev => prev.includes('.') ? prev : prev + '.');
+      } else {
+        setPrice(prev => {
+          // Limit to 2 decimal places
+          if (prev.includes('.')) {
+            const parts = prev.split('.');
+            if (parts[1] && parts[1].length >= 2) {
+              return prev;
+            }
+          }
+          return prev + digit;
+        });
+      }
     }
   };
 
@@ -98,7 +134,29 @@ const QuantityPickerDialog: React.FC<QuantityPickerDialogProps> = ({
       return;
     }
 
-    onConfirm(quantityNum);
+    // Validate against available quantity if provided
+    if (availableQty !== undefined && quantityNum > availableQty) {
+      console.warn(`⚠️ Quantity ${quantityNum} exceeds available ${availableQty}`);
+      setError(`Cannot add ${quantityNum} units. Only ${availableQty} unit(s) available at this location.`);
+      return;
+    }
+    
+    if (availableQty === undefined) {
+      console.warn(`⚠️ WARNING: availableQty is undefined! Validation skipped.`);
+    }
+
+    // Parse price if provided
+    let priceNum: number | undefined = undefined;
+    if (showPriceInput && price.trim() !== '') {
+      priceNum = parseFloat(price);
+      if (isNaN(priceNum) || priceNum < 0) {
+        setError('Please enter a valid price (0 or greater)');
+        return;
+      }
+    }
+
+    console.log(`✅ Quantity ${quantityNum} confirmed (availableQty: ${availableQty}, price: ${priceNum})`);
+    onConfirm(quantityNum, priceNum);
     handleClose();
   };
 
@@ -106,9 +164,9 @@ const QuantityPickerDialog: React.FC<QuantityPickerDialogProps> = ({
   const DigitPad = () => (
     <Paper elevation={1} sx={{ p: 2, bgcolor: 'grey.50' }}>
       <Typography variant="subtitle2" gutterBottom align="center">
-        Digit Pad
+        Digit Pad {showPriceInput && `(${focusedField === 'quantity' ? 'Quantity' : 'Price'})`}
       </Typography>
-      <Box sx={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 1 }}>
+      <Box sx={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 1, mb: 1 }}>
         {[1, 2, 3, 4, 5, 6, 7, 8, 9].map((digit) => (
           <Button
             key={digit}
@@ -134,17 +192,42 @@ const QuantityPickerDialog: React.FC<QuantityPickerDialogProps> = ({
         >
           0
         </Button>
-        <IconButton
-          onClick={() => handleDigitClick('backspace')}
-          sx={{ 
-            border: '1px solid rgba(0, 0, 0, 0.23)',
-            borderRadius: 1,
-            minHeight: 48
-          }}
-        >
-          <BackspaceIcon />
-        </IconButton>
+        {showPriceInput && focusedField === 'price' ? (
+          <Button
+            variant="outlined"
+            onClick={() => handleDigitClick('.')}
+            sx={{ minHeight: 48, fontSize: '1.1rem' }}
+          >
+            .
+          </Button>
+        ) : (
+          <IconButton
+            onClick={() => handleDigitClick('backspace')}
+            sx={{ 
+              border: '1px solid rgba(0, 0, 0, 0.23)',
+              borderRadius: 1,
+              minHeight: 48
+            }}
+          >
+            <BackspaceIcon />
+          </IconButton>
+        )}
       </Box>
+      {showPriceInput && focusedField === 'price' && (
+        <Box sx={{ display: 'grid', gridTemplateColumns: 'repeat(1, 1fr)', gap: 1 }}>
+          <IconButton
+            onClick={() => handleDigitClick('backspace')}
+            sx={{ 
+              border: '1px solid rgba(0, 0, 0, 0.23)',
+              borderRadius: 1,
+              minHeight: 48,
+              width: '100%'
+            }}
+          >
+            <BackspaceIcon />
+          </IconButton>
+        </Box>
+      )}
     </Paper>
   );
 
@@ -195,17 +278,44 @@ const QuantityPickerDialog: React.FC<QuantityPickerDialogProps> = ({
           </Box>
         )}
 
+        {/* Stock Availability Info */}
+        {availableQty !== undefined && (
+          <Alert 
+            severity={availableQty > 0 ? 'success' : 'warning'} 
+            sx={{ mb: 3 }}
+          >
+            {availableQty > 0 ? (
+              <>
+                ✓ <strong>{availableQty} unit(s)</strong> available at this location
+              </>
+            ) : (
+              <>
+                ⚠️ <strong>Out of stock</strong> at this location
+              </>
+            )}
+          </Alert>
+        )}
+
         {/* Quantity Input */}
-        <Paper elevation={2} sx={{ p: 3, mb: 3 }}>
+        <Paper 
+          elevation={focusedField === 'quantity' ? 3 : 2} 
+          sx={{ 
+            p: 3, 
+            mb: 3,
+            border: focusedField === 'quantity' ? '2px solid' : 'none',
+            borderColor: 'primary.main'
+          }}
+        >
           <Box sx={{ textAlign: 'center' }}>
             <Typography variant="body2" color="text.secondary" gutterBottom>
-              Quantity
+              Quantity {availableQty !== undefined && `(Max: ${availableQty})`}
             </Typography>
             <TextField
               value={quantity}
               onChange={(e) => setQuantity(e.target.value)}
+              onFocus={() => setFocusedField('quantity')}
               type="number"
-              inputProps={{ min: 0 }}
+              inputProps={{ min: 0, max: availableQty }}
               placeholder="Enter quantity"
               sx={{
                 '& .MuiInputBase-input': {
@@ -219,6 +329,43 @@ const QuantityPickerDialog: React.FC<QuantityPickerDialogProps> = ({
             />
           </Box>
         </Paper>
+
+        {/* Purchase Price Input (shown only when receiving items) */}
+        {showPriceInput && (
+          <Paper 
+            elevation={focusedField === 'price' ? 3 : 2} 
+            sx={{ 
+              p: 3, 
+              mb: 3, 
+              bgcolor: 'success.50',
+              border: focusedField === 'price' ? '2px solid' : 'none',
+              borderColor: 'success.main'
+            }}
+          >
+            <Box sx={{ textAlign: 'center' }}>
+              <Typography variant="body2" color="text.secondary" gutterBottom>
+                Purchase Price per Flower (Optional)
+              </Typography>
+              <TextField
+                value={price}
+                onChange={(e) => setPrice(e.target.value)}
+                onFocus={() => setFocusedField('price')}
+                type="number"
+                inputProps={{ min: 0, step: 0.01 }}
+                placeholder="0.00"
+                sx={{
+                  '& .MuiInputBase-input': {
+                    fontSize: '1.5rem',
+                    fontWeight: 'bold',
+                    textAlign: 'center',
+                    color: 'success.main',
+                  }
+                }}
+                fullWidth
+              />
+            </Box>
+          </Paper>
+        )}
 
         {/* Digit pad */}
         <Box sx={{ mb: 3 }}>

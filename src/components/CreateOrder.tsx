@@ -54,6 +54,7 @@ import {
   AttachFile as AttachFileIcon,
   CalendarToday as CalendarIcon,
   LocalShipping as DeliveryIcon,
+  Assignment as SupplementIcon,
 } from '@mui/icons-material';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import axios from 'axios';
@@ -103,6 +104,7 @@ interface FlowerItem {
   flower_item_record_id: string;
   item_picture?: string;
   standard_price?: number;
+  item_category?: string;
 }
 
 interface BouquetItem {
@@ -117,6 +119,7 @@ interface BouquetItem {
   flower_item_record_id: string;
   item_picture?: string;
   standard_price?: number;
+  item_category?: string;
 }
 
 interface FlowerComposition {
@@ -136,7 +139,7 @@ interface BouquetDetails {
 
 interface CartItem {
   item_id: string;
-  item_type: 'Flower' | 'Bouquet';
+  item_type: 'Flower' | 'Bouquet' | 'Supplement';
   item_name: string;
   quantity: number;
   standard_price: number;  // Original price
@@ -361,9 +364,11 @@ export default function CreateOrder() {
     } else {
       // Add new item with standard price
       const standardPrice = selectedFlower.standard_price || 0;
+      const isFlower = selectedFlower.item_category?.toLowerCase() === 'flower';
+      
       const newItem: CartItem = {
         item_id: selectedFlower.flower_item_record_id,
-        item_type: 'Flower',
+        item_type: isFlower ? 'Flower' : 'Supplement',
         item_name: selectedFlower.item_name,
         quantity,
         standard_price: standardPrice,
@@ -434,12 +439,18 @@ export default function CreateOrder() {
         if (item.item_id === itemId) {
           const newQuantity = Math.max(1, item.quantity + delta);
           
-          // Check stock availability for flowers
-          if (item.item_type === 'Flower' && delta > 0) {
-            const flowerData = flowers.find(f => f.flower_item_record_id === itemId);
-            if (flowerData && newQuantity > flowerData.current_balance) {
-              // Don't allow exceeding balance
-              return item;
+          // Check stock availability
+          if (delta > 0) {
+            if (item.item_type === 'Flower') {
+              const flowerData = flowers.find(f => f.flower_item_record_id === itemId);
+              if (flowerData && newQuantity > flowerData.current_balance) {
+                return item;
+              }
+            } else if (item.item_type === 'Supplement') {
+              const supplementData = supplements.find(s => s.flower_item_record_id === itemId);
+              if (supplementData && newQuantity > supplementData.current_balance) {
+                return item;
+              }
             }
           }
           
@@ -1153,9 +1164,21 @@ export default function CreateOrder() {
                         <Avatar 
                           src={item.picture} 
                           variant="rounded"
-                          sx={{ bgcolor: item.item_type === 'Bouquet' ? 'success.light' : 'primary.light' }}
+                          sx={{ 
+                            bgcolor: item.item_type === 'Bouquet' 
+                              ? 'success.light' 
+                              : item.item_type === 'Supplement'
+                                ? 'info.light'
+                                : 'primary.light' 
+                          }}
                         >
-                          {item.item_type === 'Bouquet' ? <BouquetIcon /> : <LocalFloristIcon />}
+                          {item.item_type === 'Bouquet' ? (
+                            <BouquetIcon />
+                          ) : item.item_type === 'Supplement' ? (
+                            <SupplementIcon />
+                          ) : (
+                            <LocalFloristIcon />
+                          )}
                         </Avatar>
                       </ListItemAvatar>
                       <ListItemText
@@ -1187,8 +1210,14 @@ export default function CreateOrder() {
                                     size="small" 
                                     onClick={() => updateCartQuantity(item.item_id, 1)}
                                     disabled={(() => {
-                                      const flowerData = flowers.find(f => f.flower_item_record_id === item.item_id);
-                                      return flowerData ? item.quantity >= flowerData.current_balance : false;
+                                      if (item.item_type === 'Flower') {
+                                        const flowerData = flowers.find(f => f.flower_item_record_id === item.item_id);
+                                        return flowerData ? item.quantity >= flowerData.current_balance : false;
+                                      } else if (item.item_type === 'Supplement') {
+                                        const supplementData = supplements.find(s => s.flower_item_record_id === item.item_id);
+                                        return supplementData ? item.quantity >= supplementData.current_balance : false;
+                                      }
+                                      return false;
                                     })()}
                                   >
                                     <AddIcon fontSize="small" />
@@ -1330,7 +1359,20 @@ export default function CreateOrder() {
                             <Chip 
                               label={item.item_type} 
                               size="small" 
-                              color={item.item_type === 'Bouquet' ? 'secondary' : 'primary'}
+                              color={
+                                item.item_type === 'Bouquet' 
+                                  ? 'secondary' 
+                                  : item.item_type === 'Supplement'
+                                    ? 'info'
+                                    : 'primary'
+                              }
+                              icon={
+                                item.item_type === 'Bouquet' 
+                                  ? <BouquetIcon fontSize="small" /> 
+                                  : item.item_type === 'Supplement'
+                                    ? <SupplementIcon fontSize="small" />
+                                    : <LocalFloristIcon fontSize="small" />
+                              }
                             />
                           </TableCell>
                           <TableCell>
@@ -1344,9 +1386,23 @@ export default function CreateOrder() {
                               ) : (
                                 <Avatar 
                                   variant="rounded" 
-                                  sx={{ width: 32, height: 32, bgcolor: item.item_type === 'Bouquet' ? 'secondary.light' : 'primary.light' }}
+                                  sx={{ 
+                                    width: 32, 
+                                    height: 32, 
+                                    bgcolor: item.item_type === 'Bouquet' 
+                                      ? 'secondary.light' 
+                                      : item.item_type === 'Supplement'
+                                        ? 'info.light'
+                                        : 'primary.light' 
+                                  }}
                                 >
-                                  {item.item_type === 'Bouquet' ? <BouquetIcon fontSize="small" /> : <LocalFloristIcon fontSize="small" />}
+                                  {item.item_type === 'Bouquet' ? (
+                                    <BouquetIcon fontSize="small" />
+                                  ) : item.item_type === 'Supplement' ? (
+                                    <SupplementIcon fontSize="small" />
+                                  ) : (
+                                    <LocalFloristIcon fontSize="small" />
+                                  )}
                                 </Avatar>
                               )}
                               <Box>
@@ -1383,8 +1439,14 @@ export default function CreateOrder() {
                                   size="small" 
                                   onClick={() => updateCartQuantity(item.item_id, 1)}
                                   disabled={(() => {
-                                    const flowerData = flowers.find(f => f.flower_item_record_id === item.item_id);
-                                    return flowerData ? item.quantity >= flowerData.current_balance : false;
+                                    if (item.item_type === 'Flower') {
+                                      const flowerData = flowers.find(f => f.flower_item_record_id === item.item_id);
+                                      return flowerData ? item.quantity >= flowerData.current_balance : false;
+                                    } else if (item.item_type === 'Supplement') {
+                                      const supplementData = supplements.find(s => s.flower_item_record_id === item.item_id);
+                                      return supplementData ? item.quantity >= supplementData.current_balance : false;
+                                    }
+                                    return false;
                                   })()}
                                   sx={{ p: 0.5 }}
                                 >
