@@ -54,7 +54,7 @@ import {
   AttachFile as AttachFileIcon,
   CalendarToday as CalendarIcon,
   LocalShipping as DeliveryIcon,
-  Assignment as SupplementIcon,
+  Assignment as TaskIcon,
 } from '@mui/icons-material';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import axios from 'axios';
@@ -62,6 +62,7 @@ import { useAuth } from '../contexts/AuthContext';
 import NumberPad from './bouquets/NumberPad';
 import NumericPadModal from './NumericPadModal';
 import { apiService } from '../services/api';
+import { getItemPhotoUrl } from '../utils/photoUtils';
 
 const API_BASE_URL = (process.env.REACT_APP_API_URL || 'http://localhost:8000').replace(/\/$/, '');
 
@@ -94,14 +95,13 @@ interface Client {
 
 interface FlowerItem {
   record_id: string;
-  item_id: string;
+  item_id: number;
   item_name: string;
   Color: string;
   current_balance: number;
   reserved_qty: number;
   shop_location_id: string;
   shop_location_name: string;
-  flower_item_record_id: string;
   item_picture?: string;
   standard_price?: number;
   item_category?: string;
@@ -109,14 +109,13 @@ interface FlowerItem {
 
 interface BouquetItem {
   record_id: string;
-  item_id: string;
+  item_id: number;
   item_name: string;
   Color: string;
   current_balance: number;
   reserved_qty: number;
   shop_location_id: string;
   shop_location_name: string;
-  flower_item_record_id: string;
   item_picture?: string;
   standard_price?: number;
   item_category?: string;
@@ -138,8 +137,9 @@ interface BouquetDetails {
 }
 
 interface CartItem {
-  item_id: string;
-  item_type: 'Flower' | 'Bouquet' | 'Supplement';
+  record_id: string;  // Supabase internal ID (for React keys)
+  item_id?: number;   // Business ID (optional, for flowers/items)
+  item_type: 'Flower' | 'Bouquet' | 'Supplement' | 'Service';
   item_name: string;
   quantity: number;
   standard_price: number;  // Original price
@@ -238,7 +238,8 @@ export default function CreateOrder() {
             // Add bouquet instance to cart
             const standardPrice = bouquetDetails.bouquet?.standard_price || 0;
             const newItem: CartItem = {
-              item_id: bouquetDetails.bouquet.record_id, // Use the flower_item_record_id
+              record_id: bouquetDetails.bouquet.record_id,
+              item_id: bouquetDetails.bouquet.item_id,
               item_type: 'Bouquet',
               item_name: bouquetDetails.bouquet.item_name,
               quantity: 1,
@@ -246,7 +247,7 @@ export default function CreateOrder() {
               actual_price: standardPrice,
               markup_percentage: null,
               color: bouquetDetails.bouquet.color,
-              picture: bouquetDetails.bouquet.item_picture,
+              picture: getItemPhotoUrl(bouquetDetails.bouquet),
               bouquetDetails: {
                 transaction_id: bouquetDetails.transaction_id,
                 created_date: bouquetDetails.created_date,
@@ -353,7 +354,7 @@ export default function CreateOrder() {
     
     // Check if flower already in cart
     const existingIndex = cart.findIndex(
-      item => item.item_id === selectedFlower.flower_item_record_id
+      item => item.record_id === selectedFlower.record_id
     );
     
     if (existingIndex >= 0) {
@@ -364,18 +365,24 @@ export default function CreateOrder() {
     } else {
       // Add new item with standard price
       const standardPrice = selectedFlower.standard_price || 0;
-      const isFlower = selectedFlower.item_category?.toLowerCase() === 'flower';
+      
+      // Determine item type based on category
+      let itemType: 'Flower' | 'Supplement' = 'Flower';
+      if (selectedFlower.item_category && selectedFlower.item_category.toLowerCase() !== 'flower') {
+        itemType = 'Supplement';
+      }
       
       const newItem: CartItem = {
-        item_id: selectedFlower.flower_item_record_id,
-        item_type: isFlower ? 'Flower' : 'Supplement',
+        record_id: selectedFlower.record_id,
+        item_id: selectedFlower.item_id,
+        item_type: itemType,
         item_name: selectedFlower.item_name,
         quantity,
         standard_price: standardPrice,
         actual_price: standardPrice,  // Initialize actual_price with standard_price
         markup_percentage: null,  // No markup by default
         color: selectedFlower.Color,
-        picture: selectedFlower.item_picture,
+        picture: getItemPhotoUrl(selectedFlower),
       };
       setCart([...cart, newItem]);
     }
@@ -386,14 +393,14 @@ export default function CreateOrder() {
 
   const handleAddBouquet = async (bouquet: BouquetItem) => {
     // Check if already in cart
-    if (cart.some(item => item.item_id === bouquet.flower_item_record_id)) {
+    if (cart.some(item => item.record_id === bouquet.record_id)) {
       // Remove from cart
-      setCart(cart.filter(item => item.item_id !== bouquet.flower_item_record_id));
+      setCart(cart.filter(item => item.record_id !== bouquet.record_id));
     } else {
       // Fetch bouquet details to get composition
       let bouquetDetails: BouquetDetails | undefined;
       try {
-        const details = await apiService.getBouquetDetails(bouquet.flower_item_record_id);
+        const details = await apiService.getBouquetDetails(bouquet.record_id);
         bouquetDetails = {
           transaction_id: details.transaction_id,
           created_date: details.created_date,
@@ -409,7 +416,8 @@ export default function CreateOrder() {
       // Add to cart with standard price
       const standardPrice = bouquet.standard_price || 0;
       const newItem: CartItem = {
-        item_id: bouquet.flower_item_record_id,
+        record_id: bouquet.record_id,
+        item_id: bouquet.item_id,
         item_type: 'Bouquet',
         item_name: bouquet.item_name,
         quantity: 1,
@@ -417,7 +425,7 @@ export default function CreateOrder() {
         actual_price: standardPrice,  // Initialize actual_price with standard_price
         markup_percentage: null,  // No markup by default
         color: bouquet.Color,
-        picture: bouquet.item_picture,
+        picture: getItemPhotoUrl(bouquet),
         bouquetDetails,
       };
       setCart([...cart, newItem]);
@@ -425,32 +433,27 @@ export default function CreateOrder() {
   };
 
   const getFlowerCartQuantity = (flowerId: string): number => {
-    const item = cart.find(i => i.item_id === flowerId);
+    const item = cart.find(i => i.record_id === flowerId);
     return item ? item.quantity : 0;
   };
 
   const isBouquetInCart = (bouquetId: string): boolean => {
-    return cart.some(item => item.item_id === bouquetId);
+    return cart.some(item => item.record_id === bouquetId);
   };
 
   const updateCartQuantity = (itemId: string, delta: number) => {
     setCart(prevCart => {
       return prevCart.map(item => {
-        if (item.item_id === itemId) {
+        if (item.record_id === itemId) {
           const newQuantity = Math.max(1, item.quantity + delta);
           
-          // Check stock availability
-          if (delta > 0) {
-            if (item.item_type === 'Flower') {
-              const flowerData = flowers.find(f => f.flower_item_record_id === itemId);
-              if (flowerData && newQuantity > flowerData.current_balance) {
-                return item;
-              }
-            } else if (item.item_type === 'Supplement') {
-              const supplementData = supplements.find(s => s.flower_item_record_id === itemId);
-              if (supplementData && newQuantity > supplementData.current_balance) {
-                return item;
-              }
+          // Check stock availability for flowers and supplements
+          if ((item.item_type === 'Flower' || item.item_type === 'Supplement') && delta > 0) {
+            const dataSource = item.item_type === 'Flower' ? flowers : supplements;
+            const itemData = dataSource.find(f => f.record_id === itemId);
+            if (itemData && newQuantity > itemData.current_balance) {
+              // Don't allow exceeding balance
+              return item;
             }
           }
           
@@ -467,7 +470,7 @@ export default function CreateOrder() {
   };
 
   const removeFromCart = (itemId: string) => {
-    setCart(prevCart => prevCart.filter(item => item.item_id !== itemId));
+    setCart(prevCart => prevCart.filter(item => item.record_id !== itemId));
   };
 
   // ============================================================================
@@ -491,7 +494,7 @@ export default function CreateOrder() {
   const handleActualPriceChange = (itemId: string, newPrice: number) => {
     setCart(prevCart => {
       return prevCart.map(item => {
-        if (item.item_id === itemId) {
+        if (item.record_id === itemId) {
           return { ...item, actual_price: Math.max(0, newPrice), markup_percentage: null };
         }
         return item;
@@ -503,7 +506,7 @@ export default function CreateOrder() {
   const handleMarkupChange = (itemId: string, markupPercentage: number | null) => {
     setCart(prevCart => {
       return prevCart.map(item => {
-        if (item.item_id === itemId) {
+        if (item.record_id === itemId) {
           if (markupPercentage === null) {
             // Clear markup - reset to standard price
             return { 
@@ -528,7 +531,7 @@ export default function CreateOrder() {
 
   // Open price modal for item
   const handleOpenPriceModal = (itemId: string) => {
-    const item = cart.find(i => i.item_id === itemId);
+    const item = cart.find(i => i.record_id === itemId);
     if (item) {
       setCurrentEditingPrice(item.actual_price);
       setCurrentEditingQuantity(item.quantity);
@@ -565,19 +568,92 @@ export default function CreateOrder() {
     const discountAmount = subtotal * (discountPercentage / 100);
     const totalPrice = subtotal + deliveryPrice - discountAmount;  // Add delivery, subtract discount
     
+    // VAT Calculation Logic
+    const vatBaselines: Record<string, number> = {
+      '21%': 0,
+      '10%': 0,
+      '4%': 0,
+      '0%': 0
+    };
+
+    const getVatRate = (category?: string) => {
+      if (!category) return 0.21;
+      const cat = category.toLowerCase();
+      // 10% categories
+      if (['flower', 'bouquet', 'coffee', 'souvenir'].includes(cat)) return 0.10;
+      // 21% categories
+      if (['wine', 'cards', 'vase', 'sweets', 'paper', 'ribbon', 'carton box'].includes(cat)) return 0.21;
+      return 0.21; // Default
+    };
+
+    // Distribute items to baselines and apply discount
+    let totalDiscountedItemsSubtotal = 0;
+    cart.forEach(item => {
+      // For flowers, we need to find the category from the original items list
+      let category = item.item_type === 'Bouquet' ? 'bouquet' : undefined;
+      
+      // Try to find in flowers or supplements list to get category
+      if (!category) {
+        const flower = flowers.find(f => f.item_id === item.item_id);
+        if (flower) category = flower.item_category;
+      }
+      if (!category) {
+        const supplement = supplements.find(s => s.item_id === item.item_id);
+        if (supplement) category = supplement.item_category;
+      }
+
+      const rate = getVatRate(category);
+      const rateKey = `${Math.round(rate * 100)}%`;
+      const itemSubtotal = item.quantity * item.actual_price;
+      const discountedItemSubtotal = itemSubtotal * (1 - (discountPercentage / 100));
+      
+      if (!vatBaselines[rateKey]) vatBaselines[rateKey] = 0;
+      vatBaselines[rateKey] += discountedItemSubtotal;
+      totalDiscountedItemsSubtotal += discountedItemSubtotal;
+    });
+
+    // Distribute delivery price proportionally
+    if (deliveryPrice > 0) {
+      if (totalDiscountedItemsSubtotal > 0) {
+        Object.keys(vatBaselines).forEach(rateKey => {
+          const proportion = vatBaselines[rateKey] / totalDiscountedItemsSubtotal;
+          vatBaselines[rateKey] += deliveryPrice * proportion;
+        });
+      } else {
+        // If only delivery, put in 21% bucket
+        vatBaselines['21%'] += deliveryPrice;
+      }
+    }
+
+    const vatBreakdown = Object.entries(vatBaselines)
+      .filter(([_, amount]) => amount > 0)
+      .map(([rate, baseline]) => {
+        const rateVal = parseInt(rate) / 100;
+        const vatAmount = baseline - (baseline / (1 + rateVal));
+        return {
+          rate,
+          baseline: baseline.toFixed(2),
+          vatAmount: vatAmount.toFixed(2)
+        };
+      });
+
+    const totalVat = vatBreakdown.reduce((sum, item) => sum + parseFloat(item.vatAmount), 0);
+    
     // Calculate approximate total based on standard prices
     const approximateSubtotal = cart.reduce((sum, item) => sum + (item.quantity * item.standard_price), 0);
     const approximateTotal = approximateSubtotal;
     
     return {
-      subtotal,
-      discountAmount,
-      deliveryPrice,
-      totalPrice,
+      subtotal: subtotal.toFixed(2),
+      discountAmount: discountAmount.toFixed(2),
+      deliveryPrice: deliveryPrice.toFixed(2),
+      totalPrice: totalPrice.toFixed(2),
+      vatBreakdown,
+      totalVat: totalVat.toFixed(2),
       approximateSubtotal,
       approximateTotal,
     };
-  }, [cart, discountPercentage, deliveryPrice]);
+  }, [cart, discountPercentage, deliveryPrice, flowers, supplements]);
 
   // ============================================================================
   // FILTER & SEARCH
@@ -714,13 +790,24 @@ export default function CreateOrder() {
         payment_method: paymentStatus === 'Paid' ? paymentMethod : undefined,
         order_status: orderStatus,  // Add order status (controls business logic)
         // Include all pricing data in the initial request
-        subtotal: parseFloat(calculateTotals.subtotal.toFixed(2)),
+        subtotal: parseFloat(calculateTotals.subtotal),
         discount_percentage: discountPercentage,
-        discount_amount: parseFloat(calculateTotals.discountAmount.toFixed(2)),
-        delivery_price: parseFloat(deliveryPrice.toFixed(2)),
+        discount_amount: parseFloat(calculateTotals.discountAmount),
+        delivery_price: parseFloat(calculateTotals.deliveryPrice),
+        total_price: parseFloat(calculateTotals.totalPrice),
+        vat: JSON.stringify({
+          baselines: calculateTotals.vatBreakdown.reduce((acc, item) => ({
+            ...acc,
+            [item.rate]: {
+              baseline: parseFloat(item.baseline),
+              vat_amount: parseFloat(item.vatAmount)
+            }
+          }), {}),
+          total_vat: parseFloat(calculateTotals.totalVat)
+        }),
         // Items with unit prices
         items: cart.map(item => ({
-          item_id: item.item_id,
+          item_id: String(item.item_id || ''),
           item_type: item.item_type,
           quantity: item.quantity,
           unit_price: item.actual_price,
@@ -995,7 +1082,7 @@ export default function CreateOrder() {
             {itemType === 'flowers' || itemType === 'supplements' ? (
               <Grid container spacing={1.5}>
                 {currentItems.map((item) => {
-                  const inCart = getFlowerCartQuantity(item.flower_item_record_id);
+                  const inCart = getFlowerCartQuantity(item.record_id);
                   return (
                     <Grid item xs={6} sm={4} md={3} lg={2} key={item.record_id}>
                       <Card 
@@ -1008,11 +1095,11 @@ export default function CreateOrder() {
                         }}
                         onClick={() => handleFlowerCardClick(item)}
                       >
-                        {item.item_picture && (
+                        {getItemPhotoUrl(item) && (
                           <CardMedia
                             component="img"
                             height="80"
-                            image={item.item_picture}
+                            image={getItemPhotoUrl(item)}
                             alt={item.item_name}
                             sx={{ objectFit: 'cover' }}
                           />
@@ -1047,7 +1134,7 @@ export default function CreateOrder() {
             ) : (
               <Grid container spacing={1.5}>
                 {currentItems.map((bouquet) => {
-                  const inCart = isBouquetInCart(bouquet.flower_item_record_id);
+                  const inCart = isBouquetInCart(bouquet.record_id);
                   return (
                     <Grid item xs={6} sm={4} md={3} lg={2} key={bouquet.record_id}>
                       <Card 
@@ -1060,11 +1147,11 @@ export default function CreateOrder() {
                         }}
                         onClick={() => handleAddBouquet(bouquet)}
                       >
-                        {bouquet.item_picture && (
+                        {getItemPhotoUrl(bouquet) && (
                           <CardMedia
                             component="img"
                             height="80"
-                            image={bouquet.item_picture}
+                            image={getItemPhotoUrl(bouquet)}
                             alt={bouquet.item_name}
                             sx={{ objectFit: 'cover' }}
                           />
@@ -1152,7 +1239,7 @@ export default function CreateOrder() {
                       secondaryAction={
                         <IconButton 
                           edge="end" 
-                          onClick={() => removeFromCart(item.item_id)}
+                          onClick={() => removeFromCart(item.record_id)}
                           size="small"
                           color="error"
                         >
@@ -1172,13 +1259,12 @@ export default function CreateOrder() {
                                 : 'primary.light' 
                           }}
                         >
-                          {item.item_type === 'Bouquet' ? (
-                            <BouquetIcon />
-                          ) : item.item_type === 'Supplement' ? (
-                            <SupplementIcon />
-                          ) : (
-                            <LocalFloristIcon />
-                          )}
+                          {item.item_type === 'Bouquet' 
+                            ? <BouquetIcon /> 
+                            : item.item_type === 'Supplement'
+                              ? <TaskIcon />
+                              : <LocalFloristIcon />
+                          }
                         </Avatar>
                       </ListItemAvatar>
                       <ListItemText
@@ -1198,7 +1284,7 @@ export default function CreateOrder() {
                                 <>
                                   <IconButton 
                                     size="small" 
-                                    onClick={() => updateCartQuantity(item.item_id, -1)}
+                                    onClick={() => updateCartQuantity(item.record_id, -1)}
                                     disabled={item.quantity <= 1}
                                   >
                                     <RemoveIcon fontSize="small" />
@@ -1208,16 +1294,11 @@ export default function CreateOrder() {
                                   </Typography>
                                   <IconButton 
                                     size="small" 
-                                    onClick={() => updateCartQuantity(item.item_id, 1)}
+                                    onClick={() => updateCartQuantity(item.record_id, 1)}
                                     disabled={(() => {
-                                      if (item.item_type === 'Flower') {
-                                        const flowerData = flowers.find(f => f.flower_item_record_id === item.item_id);
-                                        return flowerData ? item.quantity >= flowerData.current_balance : false;
-                                      } else if (item.item_type === 'Supplement') {
-                                        const supplementData = supplements.find(s => s.flower_item_record_id === item.item_id);
-                                        return supplementData ? item.quantity >= supplementData.current_balance : false;
-                                      }
-                                      return false;
+                                      const dataSource = item.item_type === 'Flower' ? flowers : supplements;
+                                      const itemData = dataSource.find(f => f.item_id === item.item_id);
+                                      return itemData ? item.quantity >= itemData.current_balance : false;
                                     })()}
                                   >
                                     <AddIcon fontSize="small" />
@@ -1268,7 +1349,7 @@ export default function CreateOrder() {
                                         >
                                           <Badge badgeContent={flower.quantity} color="primary" max={99}>
                                             <Avatar
-                                              src={flower.item_picture}
+                                              src={getItemPhotoUrl(flower)}
                                               alt={flower.item_name}
                                               sx={{ 
                                                 width: 24, 
@@ -1305,7 +1386,7 @@ export default function CreateOrder() {
                   Standard Prices (orientation)
                 </Typography>
                 <Typography variant="h6" color="primary.main" fontWeight="bold">
-                  Approximate Total: €{calculateTotals.approximateTotal.toFixed(2)}
+                  Approximate Total: €{calculateTotals.approximateTotal}
                 </Typography>
                 <Typography variant="caption" color="text.secondary" display="block" sx={{ mt: 0.5, fontStyle: 'italic' }}>
                   *Update prices during checkout
@@ -1362,16 +1443,9 @@ export default function CreateOrder() {
                               color={
                                 item.item_type === 'Bouquet' 
                                   ? 'secondary' 
-                                  : item.item_type === 'Supplement'
+                                  : (item.item_type === 'Supplement' || item.item_type === 'Service')
                                     ? 'info'
                                     : 'primary'
-                              }
-                              icon={
-                                item.item_type === 'Bouquet' 
-                                  ? <BouquetIcon fontSize="small" /> 
-                                  : item.item_type === 'Supplement'
-                                    ? <SupplementIcon fontSize="small" />
-                                    : <LocalFloristIcon fontSize="small" />
                               }
                             />
                           </TableCell>
@@ -1391,18 +1465,17 @@ export default function CreateOrder() {
                                     height: 32, 
                                     bgcolor: item.item_type === 'Bouquet' 
                                       ? 'secondary.light' 
-                                      : item.item_type === 'Supplement'
+                                      : (item.item_type === 'Supplement' || item.item_type === 'Service')
                                         ? 'info.light'
                                         : 'primary.light' 
                                   }}
                                 >
-                                  {item.item_type === 'Bouquet' ? (
-                                    <BouquetIcon fontSize="small" />
-                                  ) : item.item_type === 'Supplement' ? (
-                                    <SupplementIcon fontSize="small" />
-                                  ) : (
-                                    <LocalFloristIcon fontSize="small" />
-                                  )}
+                                  {item.item_type === 'Bouquet' 
+                                    ? <BouquetIcon fontSize="small" /> 
+                                    : (item.item_type === 'Supplement' || item.item_type === 'Service')
+                                      ? <TaskIcon fontSize="small" />
+                                      : <LocalFloristIcon fontSize="small" />
+                                  }
                                 </Avatar>
                               )}
                               <Box>
@@ -1426,7 +1499,7 @@ export default function CreateOrder() {
                               <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5, justifyContent: 'center' }}>
                                 <IconButton 
                                   size="small" 
-                                  onClick={() => updateCartQuantity(item.item_id, -1)}
+                                  onClick={() => updateCartQuantity(item.record_id, -1)}
                                   disabled={item.quantity <= 1}
                                   sx={{ p: 0.5 }}
                                 >
@@ -1437,16 +1510,10 @@ export default function CreateOrder() {
                                 </Typography>
                                 <IconButton 
                                   size="small" 
-                                  onClick={() => updateCartQuantity(item.item_id, 1)}
+                                  onClick={() => updateCartQuantity(item.record_id, 1)}
                                   disabled={(() => {
-                                    if (item.item_type === 'Flower') {
-                                      const flowerData = flowers.find(f => f.flower_item_record_id === item.item_id);
-                                      return flowerData ? item.quantity >= flowerData.current_balance : false;
-                                    } else if (item.item_type === 'Supplement') {
-                                      const supplementData = supplements.find(s => s.flower_item_record_id === item.item_id);
-                                      return supplementData ? item.quantity >= supplementData.current_balance : false;
-                                    }
-                                    return false;
+                                    const itemData = (item.item_type === 'Flower' ? flowers : supplements).find(f => f.item_id === item.item_id);
+                                    return itemData ? item.quantity >= itemData.current_balance : false;
                                   })()}
                                   sx={{ p: 0.5 }}
                                 >
@@ -1468,7 +1535,7 @@ export default function CreateOrder() {
                                   key={percentage}
                                   variant={item.markup_percentage === percentage ? 'contained' : 'outlined'}
                                   size="small"
-                                  onClick={() => handleMarkupChange(item.item_id, percentage)}
+                                  onClick={() => handleMarkupChange(item.record_id, percentage)}
                                   sx={{ minWidth: 45, px: 1, py: 0.25 }}
                                 >
                                   {percentage}
@@ -1483,10 +1550,10 @@ export default function CreateOrder() {
                                 onChange={(e) => {
                                   const value = e.target.value === '' ? null : parseInt(e.target.value);
                                   if (value === null) {
-                                    handleMarkupChange(item.item_id, null);
+                                    handleMarkupChange(item.record_id, null);
                                   } else {
                                     const clampedValue = Math.max(-100, Math.min(100, value));
-                                    handleMarkupChange(item.item_id, clampedValue);
+                                    handleMarkupChange(item.record_id, clampedValue);
                                   }
                                 }}
                                 inputProps={{ 
@@ -1515,7 +1582,7 @@ export default function CreateOrder() {
                                 <Button
                                   variant="text"
                                   size="small"
-                                  onClick={() => handleMarkupChange(item.item_id, null)}
+                                  onClick={() => handleMarkupChange(item.record_id, null)}
                                   sx={{ fontSize: '0.7rem', py: 0, minHeight: 0, px: 0.5 }}
                                 >
                                   Clear
@@ -1525,7 +1592,7 @@ export default function CreateOrder() {
                           </TableCell>
                           <TableCell align="right">
                             <Box
-                              onClick={() => handleOpenPriceModal(item.item_id)}
+                              onClick={() => handleOpenPriceModal(item.record_id)}
                               sx={{
                                 cursor: 'pointer',
                                 p: 1,
@@ -1554,7 +1621,7 @@ export default function CreateOrder() {
                             <Tooltip title="Remove item from order">
                               <IconButton
                                 size="small"
-                                onClick={() => removeFromCart(item.item_id)}
+                                onClick={() => removeFromCart(item.record_id)}
                                 color="error"
                                 sx={{ 
                                   '&:hover': {
@@ -1621,7 +1688,7 @@ export default function CreateOrder() {
                   <Box sx={{ display: 'flex', justifyContent: 'space-between' }}>
                     <Typography variant="body1">Subtotal:</Typography>
                     <Typography variant="body1" fontWeight="bold">
-                      €{calculateTotals.subtotal.toFixed(2)}
+                      €{calculateTotals.subtotal}
                     </Typography>
                   </Box>
                   
@@ -1648,7 +1715,7 @@ export default function CreateOrder() {
                         fontWeight: 'bold',
                       }}
                     >
-                      €{deliveryPrice.toFixed(2)}
+                      €{calculateTotals.deliveryPrice}
                     </Box>
                   </Box>
                   
@@ -1658,17 +1725,36 @@ export default function CreateOrder() {
                         Discount ({discountPercentage}%):
                       </Typography>
                       <Typography variant="body1" fontWeight="bold">
-                        -€{calculateTotals.discountAmount.toFixed(2)}
+                        -€{calculateTotals.discountAmount}
                       </Typography>
                     </Box>
                   )}
                   
-                  <Divider />
+                  {calculateTotals.vatBreakdown.length > 0 && (
+                  <Box sx={{ mt: 1, mb: 1, p: 1, bgcolor: 'action.hover', borderRadius: 1 }}>
+                    <Typography variant="caption" fontWeight="bold" display="block" gutterBottom color="primary">
+                      Desglose de IVA:
+                    </Typography>
+                    {calculateTotals.vatBreakdown.map((data) => (
+                      <Box key={data.rate} sx={{ display: 'flex', justifyContent: 'space-between' }}>
+                        <Typography variant="caption">IVA {data.rate} (Base €{data.baseline}):</Typography>
+                        <Typography variant="caption" fontWeight="bold">€{data.vatAmount}</Typography>
+                      </Box>
+                    ))}
+                    <Divider sx={{ my: 0.5 }} />
+                    <Box sx={{ display: 'flex', justifyContent: 'space-between' }}>
+                      <Typography variant="caption" fontWeight="bold">Total IVA:</Typography>
+                      <Typography variant="caption" fontWeight="bold">€{calculateTotals.totalVat}</Typography>
+                    </Box>
+                  </Box>
+                )}
+                
+                <Divider />
                   
                   <Box sx={{ display: 'flex', justifyContent: 'space-between' }}>
                     <Typography variant="h6">Total:</Typography>
                     <Typography variant="h6" fontWeight="bold" color="primary">
-                      €{calculateTotals.totalPrice.toFixed(2)}
+                      €{calculateTotals.totalPrice}
                     </Typography>
                   </Box>
                 </Box>
@@ -1912,7 +1998,8 @@ export default function CreateOrder() {
           }}
           onSubmit={handleNumberPadSave}
           flowerName={`${selectedFlower.item_name} (${selectedFlower.Color})`}
-          initialValue={getFlowerCartQuantity(selectedFlower.flower_item_record_id)}
+          imageUrl={getItemPhotoUrl(selectedFlower)}
+          initialValue={getFlowerCartQuantity(selectedFlower.record_id)}
           maxQuantity={selectedFlower.current_balance}
         />
       )}

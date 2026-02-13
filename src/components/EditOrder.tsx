@@ -53,11 +53,13 @@ import {
   CloudUpload as CloudUploadIcon,
   Download as DownloadIcon,
   AttachFile as AttachFileIcon,
+  Print as PrintIcon,
 } from '@mui/icons-material';
 import { useNavigate, useParams } from 'react-router-dom';
-import { apiService, InventoryItem } from '../services/api';
+import { apiService, InventoryItem, ItemBalance } from '../services/api';
 import QuantityPickerDialog from './QuantityPickerDialog';
 import { FlowerSpinner } from './FlowerSpinner';
+import { getItemPhotoUrl } from '../utils/photoUtils';
 
 const API_BASE_URL = (process.env.REACT_APP_API_URL || 'http://localhost:8000').replace(/\/$/, '');
 
@@ -73,6 +75,7 @@ interface Client {
 interface Item {
   id: string;
   fields: {
+    item_id?: number | number[];  // Business ID (can be single value or array in Supabase)
     item_name: string;
     product_name?: string;
     balance?: number;
@@ -100,6 +103,7 @@ interface BouquetInstance {
     quantity: number;
     standard_price: number;
   }>;
+  standard_price: number;
   calculated_price?: number;  // Optional - may not be calculated yet for some bouquets
   total_flowers_used: number;
 }
@@ -117,7 +121,7 @@ interface AirtableAttachment {
 interface OrderItem {
   id?: string;
   item_id: string;
-  item_type: 'Bouquet' | 'Flower' | 'Service';
+  item_type: 'Bouquet' | 'Flower' | 'Service' | 'Supplement';
   item_name: string;
   quantity: number;
   unit_price: number;
@@ -136,6 +140,7 @@ interface OrderItemRow {
   actual_price: number;
   subtotal: number;
   markup_percentage: number | null;  // Markup percentage applied to standard price
+  item_category?: string;
   flower_picture?: string;
   availableQty?: number;
   bouquet_details?: {
@@ -175,6 +180,7 @@ interface Order {
     notes?: string;
     created?: string;
     Attachments?: AirtableAttachment[];
+    vat?: string;
   };
   client?: any;
   items?: OrderItem[];
@@ -198,11 +204,11 @@ export default function EditOrder() {
   
   // Data states
   const [clients, setClients] = useState<Client[]>([]);
-  const [items, setItems] = useState<Item[]>([]);
+  const [items, setItems] = useState<ItemBalance[]>([]);
   const [bouquets, setBouquets] = useState<BouquetInstance[]>([]);
   const [order, setOrder] = useState<Order | null>(null);
   const [locationId, setLocationId] = useState<string | null>(null);
-  const [itemsBalance, setItemsBalance] = useState<any[]>([]);
+  const [itemsBalance, setItemsBalance] = useState<ItemBalance[]>([]);
   
   // Form states
   const [selectedClient, setSelectedClient] = useState<Client | null>(null);
@@ -223,19 +229,19 @@ export default function EditOrder() {
   // UI states
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [printing, setPrinting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
-  const [currentTab, setCurrentTab] = useState(0);
+  const [currentTab, setCurrentTab] = useState(2);
   
   // Quantity picker modal states
   const [quantityPickerOpen, setQuantityPickerOpen] = useState(false);
-  const [selectedItemForModal, setSelectedItemForModal] = useState<Item | null>(null);
-  const [selectedBouquetForModal, setSelectedBouquetForModal] = useState<BouquetInstance | null>(null);
-  const [modalItemType, setModalItemType] = useState<'Flower' | 'Bouquet'>('Flower');
+  const [selectedItemForModal, setSelectedItemForModal] = useState<ItemBalance | null>(null);
+  const [modalItemType, setModalItemType] = useState<'Flower' | 'Supplement'>('Flower');
   
   // Items tab search/filter states
   const [itemType, setItemType] = useState<'flowers' | 'bouquets' | 'supplements'>('flowers');
-  const [supplements, setSupplements] = useState<Item[]>([]);
+  const [supplements, setSupplements] = useState<ItemBalance[]>([]);
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedColor, setSelectedColor] = useState<string | null>(null);
   const [hideZeroBalances, setHideZeroBalances] = useState(true);
@@ -248,11 +254,12 @@ export default function EditOrder() {
   useEffect(() => {
     loadOrder();
     loadClients();
-    loadItems();
+    loadRawItems();
     loadBouquets();
-    loadSupplements();
   }, [orderId]);
 
+  const [rawItems, setRawItems] = useState<Item[]>([]);
+  
   const loadOrder = async () => {
     if (!orderId) return;
     
@@ -300,15 +307,23 @@ export default function EditOrder() {
             id: item.id,
             tempId: item.id || `temp-${Date.now()}-${Math.random()}`,
             item_id: item.item_id,
-            // Convert legacy 'Item' type to 'Flower' for display (all non-bouquet items are stored as Flower type in orders)
-            item_type: item.item_type === 'Item' ? 'Flower' : item.item_type as 'Flower' | 'Bouquet' | 'Service',
+            // Determine item type correctly
+            item_type: (() => {
+              if (item.item_type === 'Bouquet') return 'Bouquet';
+              if (item.item_type === 'Supplement') return 'Supplement';
+              if (item.item_type === 'Service') return 'Service';
+              // Fallback for legacy data or if item_category is provided instead
+              if (item.item_category && item.item_category.toLowerCase() !== 'flower') return 'Supplement';
+              return 'Flower';
+            })(),
             item_name: item.item_name,
             quantity: item.quantity,
             standard_price: item.standard_unit_price || item.unit_price,  // Reference price from items table
             actual_price: item.unit_price,  // Actual price used for order total
             subtotal: item.subtotal || (item.quantity * item.unit_price),
+            item_category: item.item_category,
             markup_percentage: null,  // Initialize without markup (user can apply it in checkout tab)
-            flower_picture: item.flower_picture,
+            flower_picture: getItemPhotoUrl(item),
             bouquet_details: item.bouquet_details,
           };
         });
@@ -370,34 +385,73 @@ export default function EditOrder() {
     }
   }, [locationId]);
 
-  // Reload items when balance data is available to attach available quantities
+  // Reload items when balance data or raw items are available to attach available quantities and location prices
   useEffect(() => {
-    if (itemsBalance.length > 0) {
-      // Reattach balance data to flowers
-      if (items.length > 0) {
-        const itemsWithBalance = items.map((item: Item) => {
-          const balanceRecord = itemsBalance.find(b => b.flower_item_record_id === item.id);
-          return {
-            ...item,
-            availableQty: balanceRecord ? balanceRecord.current_balance : 0
-          };
-        });
-        setItems(itemsWithBalance);
-      }
+    if (rawItems.length > 0 && itemsBalance.length > 0) {
+      console.log('🔄 Merging raw items with balance data...');
       
-      // Reattach balance data to supplements
-      if (supplements.length > 0) {
-        const supplementsWithBalance = supplements.map((item: Item) => {
-          const balanceRecord = itemsBalance.find(b => b.flower_item_record_id === item.id);
-          return {
-            ...item,
-            availableQty: balanceRecord ? balanceRecord.current_balance : 0
-          };
-        });
-        setSupplements(supplementsWithBalance);
+      const mergedItems: ItemBalance[] = rawItems
+        .filter((item: Item) => {
+          const itemBusinessId = Array.isArray(item.fields.item_id) ? item.fields.item_id[0] : item.fields.item_id;
+          return itemBusinessId !== undefined && itemBusinessId !== null;
+        })
+        .map((item: Item) => {
+        // Match by business item_id (which is in array format [16] in Supabase)
+        const itemBusinessId = Array.isArray(item.fields.item_id) ? item.fields.item_id[0] : item.fields.item_id;
+        const balanceRecord = itemsBalance.find(b => b.item_id === itemBusinessId);
+        
+        return {
+          record_id: balanceRecord?.record_id || item.id,
+          balance_record_id: balanceRecord?.balance_record_id || 0,
+          item_id: itemBusinessId!,
+          item_name: item.fields.item_name || item.fields.product_name || 'Unknown',
+          Color: item.fields.Color || 'Unknown',
+          item_category: item.fields.item_category || 'Other',
+          item_description: '',
+          expiry_days: 0,
+          item_picture: getItemPhotoUrl(item.fields),
+          current_balance: balanceRecord ? balanceRecord.current_balance : 0,
+          reserved_qty: balanceRecord ? balanceRecord.reserved_qty : 0,
+          shop_location_id: locationId || '',
+          shop_location_name: balanceRecord?.shop_location_name || '',
+          standard_price: balanceRecord?.standard_price ?? item.fields.standard_price ?? 0,
+          location_standard_item_price: balanceRecord?.location_standard_item_price
+        };
+      });
+
+      // Split into flowers and supplements
+      const flowerItems = mergedItems.filter(item => item.item_category.toLowerCase() === 'flower');
+      const supplementItems = mergedItems.filter(item => 
+        item.item_category.toLowerCase() !== 'flower' && 
+        item.item_category.toLowerCase() !== 'bouquet' && 
+        item.item_category.toLowerCase() !== '_bouquet'
+      );
+
+      setItems(flowerItems);
+      setSupplements(supplementItems);
+      console.log(`✅ Merged ${mergedItems.length} items (${flowerItems.length} flowers, ${supplementItems.length} supplements)`);
+
+      // Reattach balance data and location prices to current order items
+      if (orderItems.length > 0) {
+        setOrderItems(prevItems => prevItems.map(item => {
+          const itemIdNum = typeof item.item_id === 'string' ? parseInt(item.item_id) : item.item_id;
+          const balanceRecord = itemsBalance.find(b => b.item_id === itemIdNum);
+          if (balanceRecord) {
+            const locationPrice = balanceRecord.location_standard_item_price ?? balanceRecord.standard_price;
+            if (locationPrice !== undefined && locationPrice !== item.standard_price) {
+              console.log(`💰 Updating standard price for ${item.item_name}: ${item.standard_price} -> ${locationPrice}`);
+              return {
+                ...item,
+                standard_price: locationPrice,
+                availableQty: balanceRecord.current_balance
+              };
+            }
+          }
+          return item;
+        }));
       }
     }
-  }, [itemsBalance]);
+  }, [itemsBalance, rawItems, locationId]);
 
   const loadBalanceData = async () => {
     if (!locationId) return;
@@ -413,16 +467,12 @@ export default function EditOrder() {
     }
   };
 
-  const loadItems = async () => {
+  const loadRawItems = async () => {
     try {
-      console.log('🌸 Loading items...');
+      console.log('📦 Loading raw items...');
       const allItems = await apiService.getRawItems();
-      // Load only items with category 'flower'
-      const availableItems = allItems.filter((item: Item) => 
-        item.fields.item_category?.toLowerCase() === 'flower'
-      );
-      console.log(`✅ Loaded ${availableItems.length} items`);
-      setItems(availableItems);
+      console.log(`✅ Loaded ${allItems.length} raw items`);
+      setRawItems(allItems);
     } catch (err: any) {
       console.error('❌ Failed to load items:', err);
     }
@@ -456,33 +506,16 @@ export default function EditOrder() {
     }
   };
 
-  const loadSupplements = async () => {
-    try {
-      console.log('📦 Loading supplements...');
-      const allItems = await apiService.getRawItems();
-      // Load items where item_category is not 'flower' and not 'bouquet'
-      const supplementItems = allItems.filter((item: Item) => 
-        item.fields.item_category?.toLowerCase() !== 'flower' &&
-        item.fields.item_category !== 'bouquet' && 
-        item.fields.item_category !== '_bouquet'
-      );
-      console.log(`✅ Loaded ${supplementItems.length} supplements`);
-      setSupplements(supplementItems);
-    } catch (err: any) {
-      console.error('❌ Failed to load supplements:', err);
-    }
-  };
-
   // ============================================================================
   // FILTER & SEARCH
   // ============================================================================
 
   const availableColors = (() => {
     if (itemType === 'flowers') {
-      const colors = new Set<string>((items as Item[]).map(item => item.fields.Color).filter((c): c is string => Boolean(c)));
+      const colors = new Set<string>((items as ItemBalance[]).map(item => item.Color).filter((c): c is string => Boolean(c)));
       return Array.from(colors).sort();
     } else if (itemType === 'supplements') {
-      const colors = new Set<string>((supplements as Item[]).map(item => item.fields.Color).filter((c): c is string => Boolean(c)));
+      const colors = new Set<string>((supplements as ItemBalance[]).map(item => item.Color).filter((c): c is string => Boolean(c)));
       return Array.from(colors).sort();
     } else {
       const colors = new Set<string>((bouquets as BouquetInstance[]).map(b => b.bouquet.color).filter((c): c is string => Boolean(c)));
@@ -496,18 +529,18 @@ export default function EditOrder() {
     if (searchQuery) {
       const query = searchQuery.toLowerCase();
       result = result.filter(f => 
-        f.fields.item_name?.toLowerCase().includes(query) ||
-        String(f.id || '').toLowerCase().includes(query) ||
-        f.fields.Color?.toLowerCase().includes(query)
+        f.item_name?.toLowerCase().includes(query) ||
+        String(f.item_id || '').toLowerCase().includes(query) ||
+        f.Color?.toLowerCase().includes(query)
       );
     }
     
     if (selectedColor) {
-      result = result.filter(f => f.fields.Color === selectedColor);
+      result = result.filter(f => f.Color === selectedColor);
     }
     
     if (hideZeroBalances && locationId) {
-      result = result.filter(f => (f.availableQty || 0) > 0);
+      result = result.filter(f => (f.current_balance || 0) > 0);
     }
     
     return result;
@@ -538,18 +571,18 @@ export default function EditOrder() {
     if (searchQuery) {
       const query = searchQuery.toLowerCase();
       result = result.filter(s => 
-        s.fields.item_name?.toLowerCase().includes(query) ||
-        String(s.id || '').toLowerCase().includes(query) ||
-        s.fields.Color?.toLowerCase().includes(query)
+        s.item_name?.toLowerCase().includes(query) ||
+        String(s.item_id || '').toLowerCase().includes(query) ||
+        s.Color?.toLowerCase().includes(query)
       );
     }
     
     if (selectedColor) {
-      result = result.filter(s => s.fields.Color === selectedColor);
+      result = result.filter(s => s.Color === selectedColor);
     }
     
     if (hideZeroBalances && locationId) {
-      result = result.filter(s => (s.availableQty || 0) > 0);
+      result = result.filter(s => (s.current_balance || 0) > 0);
     }
     
     return result;
@@ -560,83 +593,89 @@ export default function EditOrder() {
   // ============================================================================
 
   const handleQuantityPickerConfirm = (quantity: number) => {
-    if (modalItemType === 'Flower') {
-      if (!selectedItemForModal) {
-        setError('Please select an item to add');
-        return;
-      }
-
-      const baseName = selectedItemForModal.fields.item_name || selectedItemForModal.fields.product_name || 'Unknown Item';
-      const color = selectedItemForModal.fields.Color;
-      const itemName = color && color !== 'Unknown' ? `${baseName} (${color})` : baseName;
-      const standardPrice = selectedItemForModal.fields.standard_price || 0;
-      
-      // Get item picture if available
-      const itemPicture = selectedItemForModal.fields.item_picture && selectedItemForModal.fields.item_picture.length > 0
-        ? selectedItemForModal.fields.item_picture[0].url
-        : undefined;
-
-      // Determine item type based on category
-      const isFlower = selectedItemForModal.fields.item_category?.toLowerCase() === 'flower';
-      const itemType = isFlower ? 'Flower' : 'Supplement';
-      
-      const newItem: OrderItemRow = {
-        tempId: `temp-${Date.now()}-${Math.random()}`,
-        item_id: selectedItemForModal.id,
-        item_type: itemType as 'Flower' | 'Supplement',
-        item_name: itemName,
-        quantity: quantity,
-        standard_price: standardPrice,
-        actual_price: standardPrice,
-        subtotal: quantity * standardPrice,
-        markup_percentage: null,
-        flower_picture: itemPicture,
-        availableQty: selectedItemForModal.availableQty,
-      };
-
-      setOrderItems([...orderItems, newItem]);
-      setSuccess(`✓ Added ${quantity} unit(s) of ${itemName} to order`);
-      setTimeout(() => setSuccess(null), 3000);
-    } else {
-      if (!selectedBouquetForModal) {
-        setError('Please select a bouquet to add');
-        return;
-      }
-
-      const bouquetName = selectedBouquetForModal.bouquet.item_name || 'Unknown Bouquet';
-      const calculatedPrice = selectedBouquetForModal.calculated_price || 0;
-      
-      const newItem: OrderItemRow = {
-        tempId: `temp-${Date.now()}-${Math.random()}`,
-        item_id: selectedBouquetForModal.transaction_id,
-        item_type: 'Bouquet',
-        item_name: bouquetName,
-        quantity: quantity,
-        standard_price: calculatedPrice,
-        actual_price: calculatedPrice,
-        subtotal: quantity * calculatedPrice,
-        markup_percentage: null,
-      };
-
-      setOrderItems([...orderItems, newItem]);
-      setSuccess(`✓ Added ${quantity} bouquet(s) to order`);
-      setTimeout(() => setSuccess(null), 3000);
+    if (!selectedItemForModal) {
+      setError('Please select an item to add');
+      return;
     }
+
+    const baseName = selectedItemForModal.item_name || 'Unknown Item';
+    const color = selectedItemForModal.Color;
+    const itemName = color && color !== 'Unknown' ? `${baseName} (${color})` : baseName;
+    const standardPrice = selectedItemForModal.location_standard_item_price ?? selectedItemForModal.standard_price ?? 0;
+    
+    // Get item picture if available
+    const itemPicture = selectedItemForModal.item_picture;
+
+    // Determine item type based on category
+    const isFlower = selectedItemForModal.item_category?.toLowerCase() === 'flower';
+    const itemType = isFlower ? 'Flower' : 'Supplement';
+    
+    const newItem: OrderItemRow = {
+      tempId: `temp-${Date.now()}-${Math.random()}`,
+      item_id: String(selectedItemForModal.item_id),
+      item_type: itemType as 'Flower' | 'Supplement',
+      item_name: itemName,
+      quantity: quantity,
+      standard_price: standardPrice,
+      actual_price: standardPrice,
+      subtotal: quantity * standardPrice,
+      item_category: selectedItemForModal.item_category,
+      markup_percentage: null,
+      flower_picture: getItemPhotoUrl(selectedItemForModal),
+      availableQty: selectedItemForModal.current_balance,
+    };
+
+    setOrderItems([...orderItems, newItem]);
+    setSuccess(`✓ Added ${quantity} unit(s) of ${itemName} to order`);
+    setTimeout(() => setSuccess(null), 3000);
     
     // Close modal and reset
     setQuantityPickerOpen(false);
     setSelectedItemForModal(null);
-    setSelectedBouquetForModal(null);
   };
 
-  const handleOpenQuantityPicker = (item: Item | BouquetInstance, type: 'Flower' | 'Bouquet') => {
-    if (type === 'Flower') {
-      const flowerItem = item as Item;
-      console.log(`🌸 Selected item: ${flowerItem.fields.item_name}, availableQty: ${flowerItem.availableQty}`);
-      setSelectedItemForModal(flowerItem);
+  // Check if a specific bouquet is already in the order
+  const isBouquetInOrder = (transactionId: string) => {
+    return orderItems.some(item => item.item_type === 'Bouquet' && item.item_id === transactionId);
+  };
+
+  // Toggle bouquet in order (direct add/remove without quantity picker)
+  const handleToggleBouquet = async (bouquet: BouquetInstance) => {
+    const existingItem = orderItems.find(
+      item => item.item_type === 'Bouquet' && item.item_id === bouquet.transaction_id
+    );
+
+    if (existingItem) {
+      // If already in order, remove it
+      await handleRemoveItem(existingItem);
+      setSuccess(`Removed ${bouquet.bouquet.item_name} from order`);
     } else {
-      setSelectedBouquetForModal(item as BouquetInstance);
+      // If not in order, add it with quantity 1
+      const bouquetName = bouquet.bouquet.item_name || 'Unknown Bouquet';
+      const standardPrice = bouquet.standard_price || 0;
+      
+      const newItem: OrderItemRow = {
+        tempId: `temp-${Date.now()}-${Math.random()}`,
+        item_id: bouquet.transaction_id,
+        item_type: 'Bouquet',
+        item_name: bouquetName,
+        quantity: 1,
+        standard_price: standardPrice,
+        actual_price: standardPrice,
+        subtotal: standardPrice,
+        item_category: 'bouquet',
+        markup_percentage: null,
+      };
+
+      setOrderItems([...orderItems, newItem]);
+      setSuccess(`✓ Added ${bouquetName} to order`);
     }
+    setTimeout(() => setSuccess(null), 3000);
+  };
+
+  const handleOpenQuantityPicker = (item: ItemBalance, type: 'Flower' | 'Supplement') => {
+    console.log(`🌸 Selected item (${type}): ${item.item_name}, current_balance: ${item.current_balance}`);
+    setSelectedItemForModal(item);
     setModalItemType(type);
     setQuantityPickerOpen(true);
   };
@@ -644,7 +683,6 @@ export default function EditOrder() {
   const handleCloseQuantityPicker = () => {
     setQuantityPickerOpen(false);
     setSelectedItemForModal(null);
-    setSelectedBouquetForModal(null);
   };
 
   const handleRemoveItem = async (item: OrderItemRow) => {
@@ -666,10 +704,11 @@ export default function EditOrder() {
       if (item.tempId === tempId) {
         // For Flower items, validate against available stock
         let quantity = Math.max(1, newQuantity);
-        if (item.item_type === 'Flower') {
-          // Look up the fresh availableQty from the current items list
-          const currentItem = items.find((i: Item) => i.id === item.item_id);
-          const availableQty = currentItem?.availableQty ?? item.availableQty ?? 0;
+        if (item.item_type === 'Flower' || item.item_type === 'Supplement') {
+          // Look up the fresh availableQty from either items or supplements list
+          const itemIdNum = typeof item.item_id === 'string' ? parseInt(item.item_id) : item.item_id;
+          const currentItem = [...items, ...supplements].find((i: ItemBalance) => i.item_id === itemIdNum);
+          const availableQty = currentItem?.current_balance ?? item.availableQty ?? 0;
           
           console.log(`📝 handleQuantityChange for "${item.item_name}": newQty=${newQuantity}, availableQty=${availableQty}`);
           
@@ -803,10 +842,69 @@ export default function EditOrder() {
     const discountAmount = subtotal * (discountPercentage / 100);
     const totalPrice = subtotal - discountAmount + deliveryPrice;
     
+    // VAT Calculation Logic
+    const vatBaselines: Record<string, number> = {
+      '21%': 0,
+      '10%': 0,
+      '4%': 0,
+      '0%': 0
+    };
+
+    const getVatRate = (category?: string) => {
+      if (!category) return 0.21;
+      const cat = category.toLowerCase();
+      // 10% categories
+      if (['flower', 'bouquet', 'coffee', 'souvenir'].includes(cat)) return 0.10;
+      // 21% categories
+      if (['wine', 'cards', 'vase', 'sweets', 'paper', 'ribbon', 'carton box'].includes(cat)) return 0.21;
+      return 0.21; // Default
+    };
+
+    // Distribute items to baselines and apply discount
+    let totalDiscountedItemsSubtotal = 0;
+    orderItems.forEach(item => {
+      const rate = getVatRate(item.item_category);
+      const rateKey = `${Math.round(rate * 100)}%`;
+      const discountedItemSubtotal = item.subtotal * (1 - (discountPercentage / 100));
+      
+      if (!vatBaselines[rateKey]) vatBaselines[rateKey] = 0;
+      vatBaselines[rateKey] += discountedItemSubtotal;
+      totalDiscountedItemsSubtotal += discountedItemSubtotal;
+    });
+
+    // Distribute delivery price proportionally
+    if (deliveryPrice > 0) {
+      if (totalDiscountedItemsSubtotal > 0) {
+        Object.keys(vatBaselines).forEach(rateKey => {
+          const proportion = vatBaselines[rateKey] / totalDiscountedItemsSubtotal;
+          vatBaselines[rateKey] += deliveryPrice * proportion;
+        });
+      } else {
+        // If only delivery, put in 21% bucket
+        vatBaselines['21%'] += deliveryPrice;
+      }
+    }
+
+    const vatBreakdown = Object.entries(vatBaselines)
+      .filter(([_, amount]) => amount > 0)
+      .map(([rate, baseline]) => {
+        const rateVal = parseInt(rate) / 100;
+        const vatAmount = baseline - (baseline / (1 + rateVal));
+        return {
+          rate,
+          baseline: baseline.toFixed(2),
+          vatAmount: vatAmount.toFixed(2)
+        };
+      });
+
+    const totalVat = vatBreakdown.reduce((sum, item) => sum + parseFloat(item.vatAmount), 0);
+
     return {
       subtotal: subtotal.toFixed(2),
       discountAmount: discountAmount.toFixed(2),
       totalPrice: totalPrice.toFixed(2),
+      vatBreakdown,
+      totalVat: totalVat.toFixed(2)
     };
   };
 
@@ -884,7 +982,7 @@ export default function EditOrder() {
       const newItems = orderItems.filter(item => !item.id);
       if (newItems.length > 0) {
         const itemsToAdd = newItems.map(item => ({
-          item_id: item.item_id,
+          item_id: String(item.item_id || ''),
           item_type: item.item_type,
           quantity: item.quantity,
           unit_price: item.actual_price,
@@ -927,7 +1025,7 @@ export default function EditOrder() {
       if (newItems.length > 0) {
         console.log(`Creating ${newItems.length} new order items...`);
         const itemsToCreate = newItems.map(item => ({
-          item_id: item.item_id,  // FIX: Use correct field name (not flower_id/bouquet_id)
+          item_id: String(item.item_id || ''),  // FIX: Use correct field name (not flower_id/bouquet_id) and ensure string type
           item_type: item.item_type,
           quantity: item.quantity,
           unit_price: item.actual_price,
@@ -958,12 +1056,13 @@ export default function EditOrder() {
       
       // Prepare previous_items snapshot for accurate change detection
       const previousItemsSnapshot = initialOrderItems.map(item => ({
-        item_id: item.item_id,
+        item_id: String(item.item_id || ''),
         item_name: item.item_name,
         item_type: item.item_type,
         quantity: item.quantity,
         unit_price: item.actual_price,
-        subtotal: item.subtotal
+        subtotal: item.subtotal,
+        item_category: item.item_category
       }));
       
       console.log(`📸 Sending previous items snapshot: ${previousItemsSnapshot.length} items`);
@@ -984,6 +1083,16 @@ export default function EditOrder() {
         delivery_price: deliveryPrice,
         subtotal: parseFloat(totals.subtotal),
         total_price: parseFloat(totals.totalPrice),
+        vat: JSON.stringify({
+          baselines: totals.vatBreakdown.reduce((acc, item) => ({
+            ...acc,
+            [item.rate]: {
+              baseline: parseFloat(item.baseline),
+              vat_amount: parseFloat(item.vatAmount)
+            }
+          }), {}),
+          total_vat: parseFloat(totals.totalVat)
+        }),
         // CRITICAL: Send snapshot of items when editing started
         // This allows backend to accurately compare before/after states
         previous_items: previousItemsSnapshot,
@@ -999,6 +1108,23 @@ export default function EditOrder() {
       setError('Failed to update: ' + (err.response?.data?.detail || err.message));
     } finally {
       setSaving(false);
+    }
+  };
+
+  const handlePrintReceipt = async () => {
+    if (!orderId) return;
+    
+    try {
+      setPrinting(true);
+      setError(null);
+      await apiService.printReceipt(orderId);
+      setSuccess('Receipt sent to printer successfully!');
+      setTimeout(() => setSuccess(null), 3000);
+    } catch (err: any) {
+      console.error('Error printing receipt:', err);
+      setError('Failed to print receipt: ' + (err.response?.data?.detail || err.message));
+    } finally {
+      setPrinting(false);
     }
   };
 
@@ -1248,9 +1374,23 @@ export default function EditOrder() {
                     {/* Type Icon */}
                     <Avatar 
                       variant="rounded"
-                      sx={{ width: 32, height: 32, bgcolor: item.item_type === 'Bouquet' ? 'success.light' : 'primary.light' }}
+                      sx={{ 
+                        width: 32, 
+                        height: 32, 
+                        bgcolor: item.item_type === 'Bouquet' 
+                          ? 'success.light' 
+                          : item.item_type === 'Supplement'
+                            ? 'info.light'
+                            : 'primary.light' 
+                      }}
                     >
-                      {item.item_type === 'Bouquet' ? <BouquetIcon sx={{ fontSize: 18 }} /> : <LocalFloristIcon sx={{ fontSize: 18 }} />}
+                      {item.item_type === 'Bouquet' ? (
+                        <BouquetIcon sx={{ fontSize: 18 }} />
+                      ) : item.item_type === 'Supplement' ? (
+                        <AddIcon sx={{ fontSize: 18 }} />
+                      ) : (
+                        <LocalFloristIcon sx={{ fontSize: 18 }} />
+                      )}
                     </Avatar>
 
                     {/* Item Name */}
@@ -1415,13 +1555,13 @@ export default function EditOrder() {
             {(itemType === 'flowers' || itemType === 'supplements') && (itemType === 'flowers' ? filteredFlowers : filteredSupplements).length > 0 ? (
               <Grid container spacing={1.5}>
                 {(itemType === 'flowers' ? filteredFlowers : filteredSupplements).map((item) => (
-                  <Grid item xs={6} sm={4} md={3} lg={3} key={item.id}>
+                  <Grid item xs={6} sm={4} md={3} lg={3} key={item.record_id}>
                     <Card 
                       sx={{ 
                         cursor: 'pointer',
                         border: '1px solid',
-                        borderColor: item.availableQty === 0 ? '#ff9800' : 'divider',
-                        backgroundColor: item.availableQty === 0 ? 'rgba(255, 152, 0, 0.05)' : 'transparent',
+                        borderColor: item.current_balance === 0 ? '#ff9800' : 'divider',
+                        backgroundColor: item.current_balance === 0 ? 'rgba(255, 152, 0, 0.05)' : 'transparent',
                         '&:hover': { boxShadow: 3, transform: 'translateY(-2px)' },
                         height: '100%',
                         position: 'relative',
@@ -1429,7 +1569,7 @@ export default function EditOrder() {
                         display: 'flex',
                         flexDirection: 'column',
                       }}
-                      onClick={() => handleOpenQuantityPicker(item, 'Flower')}
+                      onClick={() => handleOpenQuantityPicker(item, itemType === 'flowers' ? 'Flower' : 'Supplement')}
                     >
                       {/* Item Image - Proper Aspect Ratio Container */}
                       <Box
@@ -1444,18 +1584,18 @@ export default function EditOrder() {
                           justifyContent: 'center',
                         }}
                       >
-                        {item.fields.item_picture && item.fields.item_picture.length > 0 ? (() => {
-                          const imageUrl = item.fields.item_picture[0].url;
-                          return (
+                        {(() => {
+                          const imageUrl = getItemPhotoUrl(item);
+                          return imageUrl ? (
                             <Box
                               component="img"
                               src={imageUrl}
-                              alt={item.fields.item_name}
+                              alt={item.item_name}
                               onError={(e: any) => {
                                 console.error(`❌ Failed to load item image: ${imageUrl}`);
                                 e.target.style.display = 'none';
                               }}
-                              onLoad={() => console.log(`✅ Loaded item image: ${item.fields.item_name}`)}
+                              onLoad={() => console.log(`✅ Loaded item image: ${item.item_name}`)}
                               sx={{ 
                                 position: 'absolute',
                                 top: 0,
@@ -1466,20 +1606,20 @@ export default function EditOrder() {
                                 display: 'block'
                               }}
                             />
+                          ) : (
+                            <LocalFloristIcon sx={{ fontSize: 32, opacity: 0.3, position: 'absolute' }} />
                           );
-                        })() : (
-                          <LocalFloristIcon sx={{ fontSize: 32, opacity: 0.3, position: 'absolute' }} />
-                        )}
+                        })()}
                       </Box>
                       
                       {/* Stock badge */}
-                      <Tooltip title={`Available at this location: ${item.availableQty || 0} units`}>
+                      <Tooltip title={`Available at this location: ${item.current_balance || 0} units`}>
                         <Box
                           sx={{
                             position: 'absolute',
                             top: 4,
                             right: 4,
-                            backgroundColor: item.availableQty === 0 ? '#ff9800' : '#4caf50',
+                            backgroundColor: item.current_balance === 0 ? '#ff9800' : '#4caf50',
                             color: 'white',
                             borderRadius: '50%',
                             width: 24,
@@ -1492,19 +1632,19 @@ export default function EditOrder() {
                             zIndex: 1,
                           }}
                         >
-                          {item.availableQty || 0}
+                          {item.current_balance || 0}
                         </Box>
                       </Tooltip>
                       
                       <CardContent sx={{ p: 1.5, '&:last-child': { pb: 1.5 }, flexGrow: 1, display: 'flex', flexDirection: 'column' }}>
                         <Typography variant="body2" fontWeight="bold" noWrap>
-                          {item.fields.item_name}
+                          {item.item_name}
                         </Typography>
                         <Typography variant="caption" color="text.secondary" display="block">
-                          {item.fields.Color}
+                          {item.Color}
                         </Typography>
                         <Typography variant="caption" color="text.secondary" display="block" sx={{ mt: 0.5 }}>
-                          €{item.fields.standard_price?.toFixed(2) || '0.00'}
+                          €{(item.location_standard_item_price ?? item.standard_price ?? 0).toFixed(2)}
                         </Typography>
                         <Button 
                           size="small" 
@@ -1521,84 +1661,112 @@ export default function EditOrder() {
               </Grid>
             ) : itemType === 'bouquets' && filteredBouquets.length > 0 ? (
               <Grid container spacing={1.5}>
-                {filteredBouquets.map((bouquet) => (
-                  <Grid item xs={6} sm={4} md={3} lg={3} key={bouquet.transaction_id}>
-                    <Card 
-                      sx={{ 
-                        cursor: 'pointer',
-                        border: '1px solid',
-                        borderColor: 'divider',
-                        '&:hover': { boxShadow: 3, transform: 'translateY(-2px)' },
-                        height: '100%',
-                        transition: 'all 0.2s ease-in-out',
-                        display: 'flex',
-                        flexDirection: 'column',
-                      }}
-                      onClick={() => handleOpenQuantityPicker(bouquet, 'Bouquet')}
-                    >
-                      {/* Bouquet Image - Proper Aspect Ratio Container */}
-                      <Box
-                        sx={{
-                          position: 'relative',
-                          width: '100%',
-                          paddingBottom: '100%', // 1:1 aspect ratio
-                          backgroundColor: '#f5f5f5',
-                          overflow: 'hidden',
+                {filteredBouquets.map((bouquet) => {
+                  const isInOrder = isBouquetInOrder(bouquet.transaction_id);
+                  return (
+                    <Grid item xs={6} sm={4} md={3} lg={3} key={bouquet.transaction_id}>
+                      <Card 
+                        sx={{ 
+                          cursor: 'pointer',
+                          border: '1px solid',
+                          borderColor: isInOrder ? 'primary.main' : 'divider',
+                          bgcolor: isInOrder ? 'rgba(25, 118, 210, 0.04)' : 'background.paper',
+                          '&:hover': { boxShadow: 3, transform: 'translateY(-2px)' },
+                          height: '100%',
+                          transition: 'all 0.2s ease-in-out',
                           display: 'flex',
-                          alignItems: 'center',
-                          justifyContent: 'center',
+                          flexDirection: 'column',
+                          position: 'relative',
                         }}
+                        onClick={() => handleToggleBouquet(bouquet)}
                       >
-                        {bouquet.bouquet.item_picture ? (() => {
-                          const imageUrl = bouquet.bouquet.item_picture;
-                          return (
-                            <Box
-                              component="img"
-                              src={imageUrl}
-                              alt={bouquet.bouquet.item_name}
-                              onError={(e: any) => {
-                                console.error(`❌ Failed to load bouquet image: ${imageUrl}`);
-                                e.target.style.display = 'none';
-                              }}
-                              onLoad={() => console.log(`✅ Loaded bouquet image: ${bouquet.bouquet.item_name}`)}
-                              sx={{ 
-                                position: 'absolute',
-                                top: 0,
-                                left: 0,
-                                width: '100%',
-                                height: '100%',
-                                objectFit: 'cover',
-                                display: 'block'
-                              }}
-                            />
-                          );
-                        })() : (
-                          <BouquetIcon sx={{ fontSize: 32, opacity: 0.3, position: 'absolute' }} />
+                        {/* Added Badge */}
+                        {isInOrder && (
+                          <Box
+                            sx={{
+                              position: 'absolute',
+                              top: 8,
+                              right: 8,
+                              zIndex: 1,
+                              bgcolor: 'primary.main',
+                              color: 'white',
+                              px: 1,
+                              py: 0.5,
+                              borderRadius: 1,
+                              fontSize: '0.7rem',
+                              fontWeight: 'bold',
+                              boxShadow: 1,
+                            }}
+                          >
+                            ADDED
+                          </Box>
                         )}
-                      </Box>
-                      
-                      <CardContent sx={{ p: 1.5, '&:last-child': { pb: 1.5 }, flexGrow: 1, display: 'flex', flexDirection: 'column' }}>
-                        <Typography variant="body2" fontWeight="bold" noWrap>
-                          {bouquet.bouquet.item_name}
-                        </Typography>
-                        <Typography variant="caption" color="text.secondary" display="block">
-                          {bouquet.bouquet.color}
-                        </Typography>
-                        <Typography variant="caption" color="text.secondary" display="block" sx={{ mt: 0.5 }}>
-                          €{(bouquet.calculated_price || 0).toFixed(2)}
-                        </Typography>
-                        <Button 
-                          size="small" 
-                          variant="outlined" 
-                          fullWidth 
-                          sx={{ mt: 'auto', textTransform: 'none' }}
+
+                        {/* Bouquet Image - Proper Aspect Ratio Container */}
+                        <Box
+                          sx={{
+                            position: 'relative',
+                            width: '100%',
+                            paddingBottom: '100%', // 1:1 aspect ratio
+                            backgroundColor: '#f5f5f5',
+                            overflow: 'hidden',
+                            display: 'flex',
+                            alignItems: 'center',
+                            justifyContent: 'center',
+                          }}
                         >
-                          Add to Order
-                        </Button>
-                      </CardContent>
-                    </Card>
-                  </Grid>
-                ))}
+                          {(() => {
+                            const imageUrl = getItemPhotoUrl(bouquet.bouquet);
+                            return imageUrl ? (
+                              <Box
+                                component="img"
+                                src={imageUrl}
+                                alt={bouquet.bouquet.item_name}
+                                onError={(e: any) => {
+                                  console.error(`❌ Failed to load bouquet image: ${imageUrl}`);
+                                  e.target.style.display = 'none';
+                                }}
+                                onLoad={() => console.log(`✅ Loaded bouquet image: ${bouquet.bouquet.item_name}`)}
+                                sx={{ 
+                                  position: 'absolute',
+                                  top: 0,
+                                  left: 0,
+                                  width: '100%',
+                                  height: '100%',
+                                  objectFit: 'cover',
+                                  display: 'block'
+                                }}
+                              />
+                            ) : (
+                              <BouquetIcon sx={{ fontSize: 32, opacity: 0.3, position: 'absolute' }} />
+                            );
+                          })()}
+                        </Box>
+                        
+                        <CardContent sx={{ p: 1.5, '&:last-child': { pb: 1.5 }, flexGrow: 1, display: 'flex', flexDirection: 'column' }}>
+                          <Typography variant="body2" fontWeight="bold" noWrap>
+                            {bouquet.bouquet.item_name}
+                          </Typography>
+                          <Typography variant="caption" color="text.secondary" display="block">
+                            {bouquet.bouquet.color}
+                          </Typography>
+                          <Typography variant="caption" color="text.secondary" display="block" sx={{ mt: 0.5 }}>
+                            €{(bouquet.standard_price || 0).toFixed(2)}
+                          </Typography>
+                          <Button 
+                            size="small" 
+                            variant={isInOrder ? "contained" : "outlined"}
+                            color={isInOrder ? "primary" : "inherit"}
+                            fullWidth 
+                            sx={{ mt: 'auto', textTransform: 'none' }}
+                          >
+                            {isInOrder ? 'Remove' : 'Add to Order'}
+                          </Button>
+                        </CardContent>
+                      </Card>
+                    </Grid>
+                  );
+                })}
               </Grid>
             ) : (
               <Alert severity="info">
@@ -1654,27 +1822,30 @@ export default function EditOrder() {
                           <Chip 
                             label={item.item_type} 
                             size="small" 
-                            color={item.item_type === 'Bouquet' ? 'secondary' : item.item_type === 'Supplement' ? 'info' : 'primary'}
+                            color={item.item_type === 'Bouquet' ? 'secondary' : (item.item_type === 'Supplement' || item.item_type === 'Service') ? 'info' : 'primary'}
                           />
                         </TableCell>
                         
                         {/* Item Name Column */}
                         <TableCell>
                           <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                            {item.flower_picture || (item.item_type === 'Bouquet' && item.bouquet_details?.photo) ? (
-                              <Avatar 
-                                src={item.flower_picture || item.bouquet_details?.photo} 
-                                variant="rounded" 
-                                sx={{ width: 32, height: 32 }}
-                              />
-                            ) : (
-                              <Avatar 
-                                variant="rounded" 
-                                sx={{ width: 32, height: 32, bgcolor: item.item_type === 'Bouquet' ? 'secondary.light' : item.item_type === 'Supplement' ? 'info.light' : 'primary.light' }}
-                              >
-                                {item.item_type === 'Bouquet' ? <BouquetIcon fontSize="small" /> : item.item_type === 'Supplement' ? <AssignmentIcon fontSize="small" /> : <LocalFloristIcon fontSize="small" />}
-                              </Avatar>
-                            )}
+                            {(() => {
+                              const photoUrl = getItemPhotoUrl(item) || (item.item_type === 'Bouquet' && item.bouquet_details?.photo);
+                              return photoUrl ? (
+                                <Avatar 
+                                  src={photoUrl} 
+                                  variant="rounded" 
+                                  sx={{ width: 32, height: 32 }}
+                                />
+                              ) : (
+                                <Avatar 
+                                  variant="rounded" 
+                                  sx={{ width: 32, height: 32, bgcolor: item.item_type === 'Bouquet' ? 'secondary.light' : (item.item_type === 'Supplement' || item.item_type === 'Service') ? 'info.light' : 'primary.light' }}
+                                >
+                                  {item.item_type === 'Bouquet' ? <BouquetIcon fontSize="small" /> : (item.item_type === 'Supplement' || item.item_type === 'Service') ? <AssignmentIcon fontSize="small" /> : <LocalFloristIcon fontSize="small" />}
+                                </Avatar>
+                              );
+                            })()}
                             <Box>
                               <Typography variant="body2" fontWeight="bold">
                                 {item.item_name}
@@ -1940,6 +2111,25 @@ export default function EditOrder() {
                     </Box>
                   )}
                   
+                  {totals.vatBreakdown.length > 0 && (
+                    <Box sx={{ mt: 1, mb: 1, p: 1, bgcolor: 'action.hover', borderRadius: 1 }}>
+                      <Typography variant="caption" fontWeight="bold" display="block" gutterBottom color="primary">
+                        Desglose de IVA:
+                      </Typography>
+                      {totals.vatBreakdown.map((data) => (
+                        <Box key={data.rate} sx={{ display: 'flex', justifyContent: 'space-between' }}>
+                          <Typography variant="caption">IVA {data.rate} (Base €{data.baseline}):</Typography>
+                          <Typography variant="caption" fontWeight="bold">€{data.vatAmount}</Typography>
+                        </Box>
+                      ))}
+                      <Divider sx={{ my: 0.5 }} />
+                      <Box sx={{ display: 'flex', justifyContent: 'space-between' }}>
+                        <Typography variant="caption" fontWeight="bold">Total IVA:</Typography>
+                        <Typography variant="caption" fontWeight="bold">€{totals.totalVat}</Typography>
+                      </Box>
+                    </Box>
+                  )}
+                  
                   <Divider />
                   
                   <Box sx={{ display: 'flex', justifyContent: 'space-between' }}>
@@ -2164,35 +2354,20 @@ export default function EditOrder() {
       </Box>
 
       {/* Quantity Picker Dialog - Flowers & Supplements */}
-      {selectedItemForModal && modalItemType === 'Flower' && (
+      {/* Quantity Picker Dialog */}
+      {(modalItemType === 'Flower' || modalItemType === 'Supplement') && selectedItemForModal && (
         <QuantityPickerDialog
-          open={quantityPickerOpen && modalItemType === 'Flower'}
+          open={quantityPickerOpen && (modalItemType === 'Flower' || modalItemType === 'Supplement')}
           onClose={handleCloseQuantityPicker}
           item={{
-            item_name: selectedItemForModal.fields.item_name || selectedItemForModal.fields.product_name || 'Unknown',
-            Color: selectedItemForModal.fields.Color || 'Unknown',
-            item_picture: selectedItemForModal.fields.item_picture && selectedItemForModal.fields.item_picture.length > 0 
-              ? selectedItemForModal.fields.item_picture[0].url 
-              : undefined,
+            item_name: selectedItemForModal.item_name || 'Unknown',
+            Color: selectedItemForModal.Color || 'Unknown',
+            item_picture: getItemPhotoUrl(selectedItemForModal),
           } as InventoryItem}
+          imageUrl={selectedItemForModal.item_picture}
           onConfirm={handleQuantityPickerConfirm}
-          title={`Add ${selectedItemForModal.fields.item_name || 'Item'} to Order`}
-          availableQty={selectedItemForModal.availableQty || 0}
-        />
-      )}
-
-      {/* Quantity Picker Dialog - Bouquets */}
-      {selectedBouquetForModal && modalItemType === 'Bouquet' && (
-        <QuantityPickerDialog
-          open={quantityPickerOpen && modalItemType === 'Bouquet'}
-          onClose={handleCloseQuantityPicker}
-          item={{
-            item_name: selectedBouquetForModal.bouquet.item_name || 'Unknown',
-            Color: selectedBouquetForModal.bouquet.color || 'Unknown',
-            item_picture: undefined,
-          } as InventoryItem}
-          onConfirm={handleQuantityPickerConfirm}
-          title="Add Bouquet to Order"
+          title={`Add ${selectedItemForModal.item_name || 'Item'} to Order`}
+          availableQty={selectedItemForModal.current_balance || 0}
         />
       )}
 
@@ -2231,15 +2406,26 @@ export default function EditOrder() {
         )}
 
         {currentTab === 2 && (
-          <Button
-            variant="contained"
-            color="primary"
-            startIcon={<SaveIcon />}
-            onClick={handleUpdateCheckout}
-            disabled={saving}
-          >
-            {saving ? 'Saving...' : 'Update Order'}
-          </Button>
+          <Box sx={{ display: 'flex', gap: 2 }}>
+            <Button
+              variant="outlined"
+              color="secondary"
+              startIcon={<PrintIcon />}
+              onClick={handlePrintReceipt}
+              disabled={printing || saving}
+            >
+              {printing ? 'Printing...' : 'Print Receipt'}
+            </Button>
+            <Button
+              variant="contained"
+              color="primary"
+              startIcon={<SaveIcon />}
+              onClick={handleUpdateCheckout}
+              disabled={saving || printing}
+            >
+              {saving ? 'Saving...' : 'Update Order'}
+            </Button>
+          </Box>
         )}
 
         {currentTab === 3 && null /* Status tab has its own button */}
