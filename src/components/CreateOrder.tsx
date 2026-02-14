@@ -235,6 +235,13 @@ export default function CreateOrder() {
           try {
             const bouquetDetails = await apiService.getBouquetDetails(bouquetId);
             
+            // Validate item_id
+            if (!bouquetDetails.bouquet?.item_id) {
+              console.error('❌ Bouquet missing item_id:', bouquetDetails.bouquet);
+              setError('Cannot add bouquet - missing item ID');
+              return;
+            }
+            
             // Add bouquet instance to cart
             const standardPrice = bouquetDetails.bouquet?.standard_price || 0;
             const newItem: CartItem = {
@@ -256,6 +263,12 @@ export default function CreateOrder() {
                 total_flowers_used: bouquetDetails.total_flowers_used || 0,
               },
             };
+            
+            console.log('✅ Adding bouquet from URL to cart:', { 
+              name: newItem.item_name, 
+              item_id: newItem.item_id, 
+              type: newItem.item_type 
+            });
             
             setCart(prevCart => [...prevCart, newItem]);
             
@@ -363,6 +376,13 @@ export default function CreateOrder() {
       newCart[existingIndex].quantity = quantity;
       setCart(newCart);
     } else {
+      // Validate item_id before adding
+      if (!selectedFlower.item_id) {
+        console.error('❌ Cannot add item without item_id:', selectedFlower);
+        setError(`Cannot add ${selectedFlower.item_name} - missing item ID`);
+        return;
+      }
+      
       // Add new item with standard price
       const standardPrice = selectedFlower.standard_price || 0;
       
@@ -384,6 +404,13 @@ export default function CreateOrder() {
         color: selectedFlower.Color,
         picture: getItemPhotoUrl(selectedFlower),
       };
+      
+      console.log('✅ Adding item to cart:', { 
+        name: newItem.item_name, 
+        item_id: newItem.item_id, 
+        type: newItem.item_type 
+      });
+      
       setCart([...cart, newItem]);
     }
     
@@ -397,6 +424,13 @@ export default function CreateOrder() {
       // Remove from cart
       setCart(cart.filter(item => item.record_id !== bouquet.record_id));
     } else {
+      // Validate item_id before adding
+      if (!bouquet.item_id) {
+        console.error('❌ Cannot add bouquet without item_id:', bouquet);
+        setError(`Cannot add ${bouquet.item_name} - missing item ID`);
+        return;
+      }
+      
       // Fetch bouquet details to get composition
       let bouquetDetails: BouquetDetails | undefined;
       try {
@@ -428,6 +462,13 @@ export default function CreateOrder() {
         picture: getItemPhotoUrl(bouquet),
         bouquetDetails,
       };
+      
+      console.log('✅ Adding bouquet to cart:', { 
+        name: newItem.item_name, 
+        item_id: newItem.item_id, 
+        type: newItem.item_type 
+      });
+      
       setCart([...cart, newItem]);
     }
   };
@@ -778,6 +819,13 @@ export default function CreateOrder() {
     setError(null);
     
     try {
+      // Validate that all cart items have valid item_id
+      const invalidItems = cart.filter(item => !item.item_id);
+      if (invalidItems.length > 0) {
+        console.error('❌ Cart items missing item_id:', invalidItems);
+        throw new Error(`Some items are missing valid IDs: ${invalidItems.map(i => i.item_name).join(', ')}`);
+      }
+      
       // Prepare order data with ALL pricing information upfront (ATOMIC)
       const orderData = {
         client_id: selectedClient!.id,
@@ -807,7 +855,7 @@ export default function CreateOrder() {
         }),
         // Items with unit prices
         items: cart.map(item => ({
-          item_id: String(item.item_id || ''),
+          item_id: String(item.item_id),
           item_type: item.item_type,
           quantity: item.quantity,
           unit_price: item.actual_price,
